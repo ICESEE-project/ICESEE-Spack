@@ -1,44 +1,41 @@
 spack:
-  view: false
+  view: ./view
   concretizer:
     unify: when_possible
+
   config:
     install_tree:
-      root: /storage/home/hcoda1/8/bkyanjo3/r-arobel3-0/h5py-env/opt/spack
-  compilers:
-  - compiler:
-      spec: gcc@13
-      paths:
-        cc: /usr/bin/gcc
-        cxx: /usr/bin/g++
-        f77: /usr/bin/gfortran
-        fc: /usr/bin/gfortran
-      flags: {}
-      operating_system: rhel9
-      target: x86_64
-      modules: []
-      environment: {}
-      extra_rpaths: []
-  packages:
-    all:
-      compiler: [gcc@13]
-    mpi:
-      buildable: false
-      externals:
-      - spec: openmpi@5.0.7%gcc@13
-        prefix: /storage/home/hcoda1/8/bkyanjo3/r-arobel3-0/openmpi
-    python:
-      version: [3.11.8]
-    py-h5py:
-      version: [3.12.1]
+      root: ./opt/spack
+
   specs:
-  - python@3.11.8
+  # Toolchain
+  - gcc@13.2.0
+
+  # MPI stack
+  - openmpi@5.0.7 %gcc@13.2.0
+
+  # Core scientific stack (consistent MPI/HDF5/Python)
+  - hdf5@1.14.5 +mpi ^openmpi@5.0.7 %gcc@13.2.0
+  - python@3.11.8 %gcc@13.2.0
   - py-pip
   - py-setuptools
-  - py-pkgconfig
-  - py-wheel    # Added to ensure wheel is available
-  - hdf5@1.14.5 +mpi
-  - py-h5py@3.12.1 +mpi
-  - py-venv-packages@0.1    # Custom package for pip installations
+  - py-wheel
+  - py-mpi4py ^openmpi@5.0.7
+  - py-h5py@3.12.1 +mpi ^hdf5@1.14.5+mpi
+  - py-bigmpi4py
+  - py-dask
+  - py-psutil
+  - py-tqdm
+  - py-pyyaml
+  - py-numcodecs
+  - py-gstools
+  - py-zarr@:2
+  - py-jupyter
+  - py-matplotlib
+  - py-pandas
+
+  # ICESEE itself via Spack package (defined in icesee-spack repo)
+  - py-icesee +mpi
+
   repos:
-  - /storage/home/hcoda1/8/bkyanjo3/r-arobel3-0/h5py-env/icesee-spack
+  - ./icesee-spack
