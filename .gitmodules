@@ -1,3 +1,6 @@
 [submodule "spack"]
 	path = spack
 	url = https://github.com/spack/spack.git
+[submodule "ICESEE"]
+	path = ICESEE
+	url = https://github.com/ICESEE-project/ICESEE.git
