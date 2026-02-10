@@ -1,13 +1,22 @@
 # ICESEE-Spack
-ICESEE spack repository for automating ICESEE installation, its environment  and dependencies. ICESEE will be installed via "spack install ICESEE"
 
-## To install ICESEE
-clone the Repo using:
+Spack-based installer and environment manager for **ICESEE** and its scientific
+dependencies (MPI, HDF5, Python, etc.), designed for **HPC clusters**.
+
+This repository provides:
+- A reproducible Spack environment
+- Automated OpenMPI bootstrapping (when system MPI is unavailable)
+- A single install script that works across clusters
+- Clean separation between Spack-managed and pip-only Python dependencies
+
+---
+
+## 🚀 Quick Install (One-Line)
+
 ```bash
-git clone --recurse-submodules https://github.com/ICESEE-project/ICESEE-Spack.git
-```
-Install spack and ICESEE dependencies using
-```bash
+git clone --recurse-submodules https://github.com/ICESEE-project/ICESEE-Spack.git && \
+cd ICESEE-Spack && \
 SLURM_DIR=/opt/slurm/current PMIX_DIR=/opt/pmix/5.0.1 ./scripts/install.sh
 ```
---Note: you can always set yor `PMI` and `SLURM_DIR` according to your environment
+
+---
