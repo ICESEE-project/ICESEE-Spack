@@ -25,6 +25,36 @@ PMIX_DIR="${PMIX_DIR:-}"
 ICESEE_EXTERNALS_ROOT="${ICESEE_EXTERNALS_ROOT:-$HOME/.icesee-spack/externals}"
 OPENMPI_PREFIX="${OPENMPI_PREFIX:-$ICESEE_EXTERNALS_ROOT/openmpi-${OPENMPI_VERSION}}"
 
+# ---- after OpenMPI is built/ensured ----
+OPENMPI_VERSION="${OPENMPI_VERSION:-5.0.7}"
+ICESEE_EXTERNALS_ROOT="${ICESEE_EXTERNALS_ROOT:-$HOME/.icesee-spack/externals}"
+OPENMPI_PREFIX="${OPENMPI_PREFIX:-$ICESEE_EXTERNALS_ROOT/openmpi-${OPENMPI_VERSION}}"
+
+# detect actual compiler used for your environment (gcc path/version)
+GCC_BIN="${GCC_BIN:-$(command -v gcc)}"
+GCC_VER="$("$GCC_BIN" -dumpfullversion -dumpversion 2>/dev/null | head -n1)"
+GCC_SPEC="gcc@${GCC_VER}"
+
+msg "Registering OpenMPI external (env-scoped) ..."
+mkdir -p "${ENV_DIR}/spack"
+
+cat > "${ENV_DIR}/spack/packages.yaml" <<EOF
+packages:
+  mpi:
+    buildable: false
+    providers:
+      mpi: [openmpi]
+
+  openmpi:
+    buildable: false
+    externals:
+    - spec: openmpi@${OPENMPI_VERSION} %${GCC_SPEC}
+      prefix: ${OPENMPI_PREFIX}
+EOF
+
+msg "Wrote ${ENV_DIR}/spack/packages.yaml:"
+sed -n '1,120p' "${ENV_DIR}/spack/packages.yaml"
+
 mkdir -p "${ROOT}/spack"
 
 cat > "${ROOT}/spack/packages.yaml" <<EOF
