@@ -8,18 +8,6 @@ spack:
     install_tree:
       root: ./opt/spack
 
-  packages:
-    all:
-      compiler: [gcc@13]
-      providers:
-        mpi: [openmpi]
-
-    mpi:
-      buildable: false
-
-    openmpi:
-      buildable: false
-
   specs:
   - python@3.11
   - py-pip
@@ -32,32 +20,5 @@ spack:
   - py-icesee
 
   repos:
-  - /storage/home/hcoda1/8/bkyanjo3/r-arobel3-0/ICESEE-Spack/icesee-spack
   - ./icesee-spack
-  compilers:
-  - compiler:
-      spec: gcc@=11.5.0
-      paths:
-        cc: /usr/bin/gcc
-        cxx: /usr/bin/g++
-        f77: /usr/bin/gfortran
-        fc: /usr/bin/gfortran
-      flags: {}
-      operating_system: rhel9
-      target: x86_64
-      modules: []
-      environment: {}
-      extra_rpaths: []
-  - compiler:
-      spec: gcc@=13.3.0
-      paths:
-        cc: /usr/local/pace-apps/spack/packages/linux-rhel9-x86_64_v3/gcc-11.3.1/gcc-13.3.0-lvjzavbfiykzefs5nz6th2ylvnpzuviz/bin/gcc
-        cxx: /usr/local/pace-apps/spack/packages/linux-rhel9-x86_64_v3/gcc-11.3.1/gcc-13.3.0-lvjzavbfiykzefs5nz6th2ylvnpzuviz/bin/g++
-        f77: /usr/local/pace-apps/spack/packages/linux-rhel9-x86_64_v3/gcc-11.3.1/gcc-13.3.0-lvjzavbfiykzefs5nz6th2ylvnpzuviz/bin/gfortran
-        fc: /usr/local/pace-apps/spack/packages/linux-rhel9-x86_64_v3/gcc-11.3.1/gcc-13.3.0-lvjzavbfiykzefs5nz6th2ylvnpzuviz/bin/gfortran
-      flags: {}
-      operating_system: rhel9
-      target: x86_64
-      modules: []
-      environment: {}
-      extra_rpaths: []
+  
