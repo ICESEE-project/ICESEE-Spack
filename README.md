@@ -52,7 +52,7 @@ PETSc
 Requires MATLAB available on the cluster.
 
 ``` bash
-./scripts/install.sh --with-issm
+SLURM_DIR=/opt/slurm/current PMIX_DIR=/opt/pmix/5.0.1 ./scripts/install.sh --with-issm
 ```
 
 ---
@@ -62,7 +62,7 @@ Requires MATLAB available on the cluster.
 Installs Firedrake using: - PETSc built via Spack - MPI built via Spack
 
 ``` bash
-./scripts/install.sh --with-firedrake
+SLURM_DIR=/opt/slurm/current PMIX_DIR=/opt/pmix/5.0.1 ./scripts/install.sh --with-firedrake
 ```
 
 ---
@@ -72,7 +72,7 @@ Installs Firedrake using: - PETSc built via Spack - MPI built via Spack
 Installs: - Firedrake - Icepack (depends on Firedrake)
 
 ``` bash
-./scripts/install.sh --with-icepack
+SLURM_DIR=/opt/slurm/current PMIX_DIR=/opt/pmix/5.0.1 ./scripts/install.sh --with-icepack
 ```
 
 ---
