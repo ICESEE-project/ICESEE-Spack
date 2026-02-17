@@ -113,5 +113,4 @@ If ISSM is installed:
 
 # Support
 
-For issues or contributions:
-https://github.com/ICESEE-project/ICESEE-Spack
+For issues or contributions, contact me via: briankyanjo@u.boisestate.edu
