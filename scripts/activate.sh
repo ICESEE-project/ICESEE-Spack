@@ -140,6 +140,18 @@ MPI_DIR="$(spack -e "${ENV_DIR}" location -i openmpi)"
 export PATH="${MPI_DIR}/bin:${PATH}"
 export LD_LIBRARY_PATH="${MPI_DIR}/lib:${LD_LIBRARY_PATH:-}"
 
+# Ensure MATLAB uses GCC13 libstdc++ (fix mex GLIBCXX_3.4.31)
+if command -v spack >/dev/null 2>&1; then
+  GCC_PREFIX="$(spack -e "$ROOT/.spack-env/icesee" location -i gcc@13 2>/dev/null || true)"
+  if [[ -n "$GCC_PREFIX" ]]; then
+    PRELOAD="$GCC_PREFIX/lib64/libstdc++.so.6"
+    [[ -f "$PRELOAD" ]] || PRELOAD="$GCC_PREFIX/lib/libstdc++.so.6"
+    if [[ -f "$PRELOAD" ]]; then
+      export LD_PRELOAD="${PRELOAD}${LD_PRELOAD:+:$LD_PRELOAD}"
+    fi
+  fi
+fi
+
 # DEV: allow importing the in-repo ICESEE package (repo root contains ICESEE/)
 export PYTHONPATH="${ROOT}:${PYTHONPATH:-}"
 export OMP_NUM_THREADS=1
