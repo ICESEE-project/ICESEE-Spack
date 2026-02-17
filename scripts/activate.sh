@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# Copyright (c) 2026 Brian Kyanjo
+
+# --- BEGIN: do not leak strict mode into interactive shells ---
+__ICESEE_OLD_SET_OPTS="$(set +o)"
+# --- END ---
 
 info(){ echo "[ICESEE-Spack] $*"; }
 warn(){ echo "[ICESEE-Spack][WARN] $*" >&2; }
@@ -129,6 +133,13 @@ else
   warn "External OpenMPI not found: ${OPENMPI_PREFIX}"
 fi
 
+# force spack mpi to use our OpenMPI (if present)
+module purge 2>/dev/null || true
+module load matlab || true 
+MPI_DIR="$(spack -e "${ENV_DIR}" location -i openmpi)"
+export PATH="${MPI_DIR}/bin:${PATH}"
+export LD_LIBRARY_PATH="${MPI_DIR}/lib:${LD_LIBRARY_PATH:-}"
+
 # DEV: allow importing the in-repo ICESEE package (repo root contains ICESEE/)
 export PYTHONPATH="${ROOT}:${PYTHONPATH:-}"
 export OMP_NUM_THREADS=1
@@ -142,3 +153,8 @@ echo "  mpirun  : $(command -v mpirun || true)"
 echo "  mpicc   : $(command -v mpicc || true)"
 echo "  matlab  : $(command -v matlab || true)"
 echo "  ISSM_DIR: ${ISSM_DIR:-}"
+
+# --- BEGIN: restore caller shell options ---
+eval "${__ICESEE_OLD_SET_OPTS}"
+unset __ICESEE_OLD_SET_OPTS
+# --- END ---

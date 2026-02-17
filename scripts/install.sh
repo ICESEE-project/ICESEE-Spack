@@ -5,10 +5,13 @@ set -euo pipefail
 PIP_ONLY=0
 WITH_ISSM=0
 WITH_FIREDRAKE=0
+WITH_ICEPACK=0
 for arg in "$@"; do
   [[ "$arg" == "--pip-only"  ]] && PIP_ONLY=1
   [[ "$arg" == "--with-issm" ]] && WITH_ISSM=1
   [[ "$arg" == "--with-firedrake" ]] && WITH_FIREDRAKE=1
+  # with icepack (installs firedrake deps + icepack itself)
+  [[ "$arg" == "--with-icepack" ]] && WITH_ICEPACK=1 && WITH_FIREDRAKE=1
 done
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -18,7 +21,13 @@ CUSTOM_REPO_REL="${ROOT}/icesee-spack"
 CUSTOM_REPO="$(cd "${CUSTOM_REPO_REL}" && pwd)"   # ABSOLUTE path (fixes ./icesee-spack issues)
 
 ICESEE_SUBMODULE="${ROOT}/ICESEE"
-JOBS="${JOBS:-8}"
+if [[ -n "${SLURM_CPUS_PER_TASK:-}" ]]; then
+  JOBS="${JOBS:-$SLURM_CPUS_PER_TASK}"
+elif [[ -n "${SLURM_JOB_CPUS_PER_NODE:-}" ]]; then
+  JOBS="${JOBS:-$(echo "$SLURM_JOB_CPUS_PER_NODE" | cut -d'(' -f1)}"
+else
+  JOBS="${JOBS:-$(nproc)}"
+fi
 
 msg(){ echo "[ICESEE-Spack] $*"; }
 die(){ echo "[ICESEE-Spack][ERROR] $*" >&2; exit 1; }
@@ -44,13 +53,13 @@ export SPACK_DISABLE_LOCAL_CONFIG="${SPACK_DISABLE_LOCAL_CONFIG:-1}"
 export SPACK_USER_CONFIG_PATH="${SPACK_USER_CONFIG_PATH:-$ROOT/.spack-user-empty}"
 mkdir -p "$SPACK_USER_CONFIG_PATH"
 
-# 0) Ensure git submodules exist
+# Ensure git submodules exist
 if [[ -d "${ROOT}/.git" ]]; then
   msg "Updating submodules..."
   git -C "${ROOT}" submodule update --init --recursive
 fi
 
-# 1) Choose Spack: system first, else pinned submodule
+# Choose Spack: system first, else pinned submodule
 if have_cmd spack; then
   msg "Using system Spack: $(command -v spack)"
   SPACK_BIN="spack"
@@ -64,7 +73,7 @@ fi
 
 SPACK_CMD="${SPACK_BIN} --no-local-config"
 
-# 2) Create env dirs early (so later writes/sed never fail)
+# Create env dirs early (so later writes/sed never fail)
 mkdir -p "${ENV_DIR}"
 ENV_CFG_DIR="${ENV_DIR}/spack"
 mkdir -p "${ENV_CFG_DIR}"
@@ -78,7 +87,7 @@ cp -f "${ROOT}/spack.yaml" "${ENV_DIR}/spack.yaml"
 [[ -f "${CUSTOM_REPO}/repo.yaml" ]] || die "repo.yaml not found at ${CUSTOM_REPO}/repo.yaml"
 [[ -d "${CUSTOM_REPO}/packages" ]] || die "custom repo missing ${CUSTOM_REPO}/packages"
 
-# 4) Env-scoped spack config (prefix/cache paths)
+#  Env-scoped spack config (prefix/cache paths)
 cat > "${ENV_CFG_DIR}/config.yaml" <<EOF
 config:
   install_tree:
@@ -89,7 +98,7 @@ config:
   source_cache: ${ICESEE_SPACK_CACHE}/source
 EOF
 
-# 5) Toolchain selection: module gcc/13 -> else spack install/load gcc@13 -> else system gcc
+# Toolchain selection: module gcc/13 -> else spack install/load gcc@13 -> else system gcc
 msg "Ensuring GCC >= ${WANT_GCC}..."
 if have_cmd module; then
   if module -t avail 2>&1 | grep -qx "${MODULE_GCC}"; then
@@ -119,7 +128,7 @@ have_cmd g++      || die "g++ not found after attempting module/spack setup"
 have_cmd gfortran || die "gfortran not found after attempting module/spack setup"
 msg "Using gcc: $(command -v gcc) ($(gcc --version | head -n1))"
 
-# 6) Add custom Spack repo (absolute path, env-scoped) + remove stale ./icesee-spack mapping
+#  Add custom Spack repo (absolute path, env-scoped) + remove stale ./icesee-spack mapping
 msg "Adding custom Spack repo (absolute path, env-scoped)..."
 $SPACK_CMD -e "${ENV_DIR}" config rm repos:icesee >/dev/null 2>&1 || true
 $SPACK_CMD -e "${ENV_DIR}" repo add "${CUSTOM_REPO}" || true
@@ -149,7 +158,7 @@ export SPACK_CMD
 export SPACK_GCC_SPEC="gcc@${WANT_GCC}"
 bash "${ROOT}/scripts/build_openmpi.sh"
 
-# 8) Register OpenMPI as a Spack external for THIS environment (so concretize uses it)
+# Register OpenMPI as a Spack external for THIS environment (so concretize uses it)
 msg "Registering OpenMPI external in env packages.yaml..."
 ENV_PACKAGES_YAML="${ENV_CFG_DIR}/packages.yaml"
 gcc_ver_full="$(gcc -dumpfullversion -dumpversion 2>/dev/null | head -n1 || true)"
@@ -173,14 +182,14 @@ EOF
 msg "Wrote ${ENV_PACKAGES_YAML}:"
 sed -n '1,160p' "${ENV_PACKAGES_YAML}"
 
-# 9) Concretize + install
+#  Concretize + install
 msg "Concretizing..."
 $SPACK_CMD -e "${ENV_DIR}" concretize -f
 
 msg "Installing (-j ${JOBS})..."
 $SPACK_CMD -e "${ENV_DIR}" install -j "${JOBS}"
 
-# 10) Develop ICESEE from pinned submodule (so spack uses your source), if present
+# Develop ICESEE from pinned submodule (so spack uses your source), if present
 if [[ -f "${ICESEE_SUBMODULE}/pyproject.toml" ]]; then
   msg "Registering ICESEE submodule for develop install..."
   $SPACK_CMD -e "${ENV_DIR}" develop --path "${ICESEE_SUBMODULE}" py-icesee@main || true
@@ -193,7 +202,7 @@ fi
 
 msg "Skipping Spack view (view: false)."
 
-# 11) Use env python WITHOUT requiring shell activation
+#  Use env python WITHOUT requiring shell activation
 # PYTHON="$($SPACK_CMD -e "${ENV_DIR}" location -i python)/bin/python"
 
 
@@ -211,7 +220,7 @@ msg "Ensuring pip is available in Spack Python..."
   "$PYTHON" -m pip install --upgrade pip setuptools wheel
 }
 
-# 12) Generate pip-only requirements from ICESEE/pyproject.toml and install them
+# Generate pip-only requirements from ICESEE/pyproject.toml and install them
 PYPROJECT="${ICESEE_SUBMODULE}/pyproject.toml"
 PIP_REQS="${ROOT}/requirements/pip.auto.txt"
 
@@ -231,7 +240,9 @@ else
   msg "WARNING: ${PYPROJECT} not found; skipping pip-only dependency generation."
 fi
 
-# 12.1) ISSM install
+# ------------
+# ISSM install
+# ------------
 if [[ "${WITH_ISSM}" -eq 1 ]]; then
   msg "Installing ISSM (--with-issm enabled)..."
   export ICESEE_EXTERNALS_ROOT="${ICESEE_EXTERNALS_ROOT:-$ROOT/.icesee-spack/externals}"
@@ -246,7 +257,10 @@ else
   msg "Skipping ISSM install (use --with-issm to enable)."
 fi
 
+
+# ---------------------------------------------
 # firedrake install (PETSc only, no python deps)
+# ----------------------------------------------
 if [[ "${WITH_FIREDRAKE}" -eq 1 ]]; then
   msg "Installing Firedrake into Spack Python (no venv)..."
   source "${ROOT}/spack/share/spack/setup-env.sh"
@@ -288,21 +302,97 @@ EOF
   export MPICC MPICXX MPIFC
   export OMP_NUM_THREADS=1
 
+  # GCC_PREFIX="$(spack -e .spack-env/icesee location -i gcc@13.4.0 2>/dev/null || true)"
+  # if [[ -z "$GCC_PREFIX" ]]; then
+  #   GCC_BIN="$(spack -e .spack-env/icesee compiler find >/dev/null 2>&1; spack -e .spack-env/icesee compiler info gcc@13.4.0 2>/dev/null | awk '/cc =/{print $3}' | head -n1)"
+  #   GCC_PREFIX="$(dirname "$(dirname "$GCC_BIN")")"
+  # fi
+
+  # export LD_LIBRARY_PATH="$GCC_PREFIX/lib64:$GCC_PREFIX/lib:${LD_LIBRARY_PATH:-}"
+
+  # Find the compiler used by the env (first concrete compiler entry)
+  GCC_BIN="$(
+    spack -e "${ENV_DIR}" compiler info gcc 2>/dev/null \
+    | awk '/cc =/{print $3; exit}'
+  )"
+
+  # If Spack doesn't know, fall back to whatever "gcc" is
+  if [[ -z "${GCC_BIN}" ]]; then
+    GCC_BIN="$(command -v gcc)"
+  fi
+
+  GCC_PREFIX="$(dirname "$(dirname "${GCC_BIN}")")"
+
+  # Prepend runtime libs (libstdc++)
+  export LD_LIBRARY_PATH="${GCC_PREFIX}/lib64:${GCC_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
+
+  echo "Using GCC_BIN=${GCC_BIN}"
+  echo "Using GCC_PREFIX=${GCC_PREFIX}"
+
   msg "Using mpicc: ${MPICC}"
   "${MPICC}" --showme:compile || true
 
-  "$PYTHON" -m venv venv-firedrake
+  "$PYTHON" -m venv --system-site-packages venv-firedrake
   source venv-firedrake/bin/activate
+
   "$PYTHON" -m pip cache purge
-  # export $("$PYTHON" firedrake-configure --show-env)
-  echo 'setuptools<81' > constraints.txt
+
+  cat > constraints.txt <<EOF
+setuptools<81
+numpy<2
+petsc4py==3.24.0
+EOF
   export PIP_CONSTRAINT=constraints.txt
+
+  #  install firedrake
   "$PYTHON" -m pip install "firedrake[check]"
 else
   msg "Skipping Firedrake install (use --with-firedrake to enable)."
 fi
 
-# 13) Smoke tests
+# --------------------------------------------------------
+# Icepack install (installs firedrake deps + icepack itself)
+# --------------------------------------------------------
+if [[ "${WITH_ICEPACK}" -eq 1 ]]; then
+  msg "Installing Icepack into Spack Python (no venv)..."
+  source "${ROOT}/spack/share/spack/setup-env.sh"
+  spack env activate -d "${ENV_DIR}"
+
+  # source firedrake venv to get deps + env vars
+  source "${ROOT}/venv-firedrake/bin/activate"
+  export OMP_NUM_THREADS=1
+
+  # install patchelf
+  "$PYTHON" -m pip install patchelf
+
+  # clone icepack repo if icepack is missing (uses main branch by default)
+  ICEPACK_DIR="${ICEPACK_DIR:-$ROOT/icepack}"
+  ICEPACK_REPO="git clone https://github.com/icepack/icepack.git"
+  if [[ ! -d "${ICEPACK_DIR}/.git" ]]; then
+    msg "Cloning Icepack repo into ${ICEPACK_DIR}..."
+    eval "${ICEPACK_REPO}"
+  else
+    msg "Icepack repo already exists at ${ICEPACK_DIR}; skipping clone."
+  fi
+
+  # install icepack into the same python environment as firedrake (no venv, so spack deps are visible)
+  msg "Installing Icepack from ${ICEPACK_DIR} into Spack Python environment..."
+  "$PYTHON" -m pip install --editable "${ICEPACK_DIR}"
+
+  # Install the jupyter kenrnel
+  msg "Installing Icepack Jupyter kernel..."
+  "$PYTHON" -m pip install ipykernel
+  "$PYTHON" -m ipykernel install --user --name=firedrake
+
+  # pypi gmsh
+  msg "Installing gmsh Python API from PyPI..."
+  "$PYTHON" -m pip install gmsh
+
+else
+  msg "Skipping Icepack install (use --with-icepack to enable)."
+fi
+
+# Smoke tests
 msg "Running smoke tests..."
 if [[ -f "${ROOT}/scripts/test.sh" ]]; then
   msg "Running ${ROOT}/scripts/test.sh... to test Spack environment and py-icesee installation"
