@@ -19,9 +19,3 @@ class PyIcesee(PythonPackage):
     # ABI-sensitive: prefer Spack for these
     # depends_on("openmpi", when="+mpi")
     depends_on("hdf5+mpi", when="+mpi")
-
-    # depends_on("py-mpi4py", when="+mpi", type=("build", "run"))
-    # depends_on("py-h5py+mpi", when="+mpi", type=("build", "run"))
-
-    # depends_on('openmpi@5.0.7', type=('build', 'run'))  # For mpi4py and bigmpi4py
-    # depends_on('hdf5@1.14.5+mpi', type=('build', 'run'))  # Updated to a more recent version

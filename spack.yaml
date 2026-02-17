@@ -14,11 +14,21 @@ spack:
   - py-setuptools
   - py-pkgconfig
   - py-wheel
+  - py-numpy@1.26.4
 
   - hdf5@1.14.5 +mpi
   - py-h5py@3.12.1 +mpi
   - py-icesee
 
+  # firedrake dependencies
+  - py-cython
+  - ninja
+  - pkgconf
+  # - py-petsc4py
+
+  # install petsc v3.24.0 with spack
+  - petsc@3.24.0 +mpi +shared +fortran ~fortran-bindings +mumps +hypre +metis +ptscotch +superlu-dist +suite-sparse +hdf5 +scalapack +fftw +hwloc ^hdf5+mpi ^fftw+mpi
+  - py-petsc4py ^petsc@3.24.0
+
   repos:
-  - ./icesee-spack
-  
+    icesee: ./icesee-spack
