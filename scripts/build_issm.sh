@@ -330,25 +330,25 @@ make install
 # ------------------------
 # Install Slurm cluster class (generic.m)
 # ------------------------
-TARGET_CLUSTER_FILE="${ISSM_PREFIX}/src/m/classes/clusters/generic.m"
-mkdir -p "$(dirname "${TARGET_CLUSTER_FILE}")"
+# TARGET_CLUSTER_FILE="${ISSM_PREFIX}/src/m/classes/clusters/generic.m"
+# mkdir -p "$(dirname "${TARGET_CLUSTER_FILE}")"
 
-log "Downloading ISSM cluster config -> ${TARGET_CLUSTER_FILE}"
-if command -v curl >/dev/null 2>&1; then
-  if [[ -n "${CA_BUNDLE}" && -f "${CA_BUNDLE}" ]]; then
-    curl -fsSL --cacert "${CA_BUNDLE}" -o "${TARGET_CLUSTER_FILE}" "${ICESEE_GENERIC_CLUSTER_URL}"
-  else
-    curl -fsSL -o "${TARGET_CLUSTER_FILE}" "${ICESEE_GENERIC_CLUSTER_URL}"
-  fi
-elif command -v wget >/dev/null 2>&1; then
-  if [[ -n "${CA_BUNDLE}" && -f "${CA_BUNDLE}" ]]; then
-    wget --ca-certificate="${CA_BUNDLE}" -O "${TARGET_CLUSTER_FILE}" "${ICESEE_GENERIC_CLUSTER_URL}"
-  else
-    wget -O "${TARGET_CLUSTER_FILE}" "${ICESEE_GENERIC_CLUSTER_URL}"
-  fi
-else
-  die "Neither curl nor wget found to download cluster config"
-fi
+# log "Downloading ISSM cluster config -> ${TARGET_CLUSTER_FILE}"
+# if command -v curl >/dev/null 2>&1; then
+#   if [[ -n "${CA_BUNDLE}" && -f "${CA_BUNDLE}" ]]; then
+#     curl -fsSL --cacert "${CA_BUNDLE}" -o "${TARGET_CLUSTER_FILE}" "${ICESEE_GENERIC_CLUSTER_URL}"
+#   else
+#     curl -fsSL -o "${TARGET_CLUSTER_FILE}" "${ICESEE_GENERIC_CLUSTER_URL}"
+#   fi
+# elif command -v wget >/dev/null 2>&1; then
+#   if [[ -n "${CA_BUNDLE}" && -f "${CA_BUNDLE}" ]]; then
+#     wget --ca-certificate="${CA_BUNDLE}" -O "${TARGET_CLUSTER_FILE}" "${ICESEE_GENERIC_CLUSTER_URL}"
+#   else
+#     wget -O "${TARGET_CLUSTER_FILE}" "${ICESEE_GENERIC_CLUSTER_URL}"
+#   fi
+# else
+#   die "Neither curl nor wget found to download cluster config"
+# fi
 
 log "ISSM install complete: ${ISSM_PREFIX}"
 log "To use ISSM in this shell:"
