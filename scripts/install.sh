@@ -275,6 +275,7 @@ if [[ "${WITH_FIREDRAKE}" -eq 1 ]]; then
 cat > "${CONSTRAINTS}" <<EOF
 setuptools<81
 numpy<2
+petsc4py==3.24.0
 EOF
 
   # "$PYTHON" "${ROOT}/scripts/install_firedrake.py"
@@ -344,8 +345,10 @@ petsc4py==3.24.0
 EOF
   export PIP_CONSTRAINT=constraints.txt
 
+  FIREDRAKE_VERSION="${FIREDRAKE_VERSION:-2025.10.2}"
+  log "Installing Firedrake ${FIREDRAKE_VERSION}"
   #  install firedrake
-  "$PYTHON" -m pip install "firedrake[check]"
+  "$PYTHON" -m pip install "firedrake[check]==${FIREDRAKE_VERSION}"
 else
   msg "Skipping Firedrake install (use --with-firedrake to enable)."
 fi
