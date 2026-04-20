@@ -21,13 +21,14 @@ CUSTOM_REPO_REL="${ROOT}/icesee-spack"
 CUSTOM_REPO="$(cd "${CUSTOM_REPO_REL}" && pwd)"   # ABSOLUTE path (fixes ./icesee-spack issues)
 
 ICESEE_SUBMODULE="${ROOT}/ICESEE"
-if [[ -n "${SLURM_CPUS_PER_TASK:-}" ]]; then
-  JOBS="${JOBS:-$SLURM_CPUS_PER_TASK}"
-elif [[ -n "${SLURM_JOB_CPUS_PER_NODE:-}" ]]; then
-  JOBS="${JOBS:-$(echo "$SLURM_JOB_CPUS_PER_NODE" | cut -d'(' -f1)}"
-else
-  JOBS="${JOBS:-$(nproc)}"
-fi
+#if [[ -n "${SLURM_CPUS_PER_TASK:-}" ]]; then
+#  JOBS="${JOBS:-$SLURM_CPUS_PER_TASK}"
+#elif [[ -n "${SLURM_JOB_CPUS_PER_NODE:-}" ]]; then
+#  JOBS="${JOBS:-$(echo "$SLURM_JOB_CPUS_PER_NODE" | cut -d'(' -f1)}"
+#else
+#  JOBS="${JOBS:-$(nproc)}"
+#fi
+JOBS=24
 
 msg(){ echo "[ICESEE-Spack] $*"; }
 die(){ echo "[ICESEE-Spack][ERROR] $*" >&2; exit 1; }
