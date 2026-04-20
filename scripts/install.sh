@@ -347,7 +347,7 @@ EOF
   export PIP_CONSTRAINT=constraints.txt
 
   FIREDRAKE_VERSION="${FIREDRAKE_VERSION:-2025.10.2}"
-  log "Installing Firedrake ${FIREDRAKE_VERSION}"
+  msg "Installing Firedrake ${FIREDRAKE_VERSION}"
   #  install firedrake
   "$PYTHON" -m pip install "firedrake[check]==${FIREDRAKE_VERSION}"
 else
