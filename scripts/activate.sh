@@ -109,14 +109,11 @@ info "PYTHONPATH: ${PYTHONPATH:-<empty>}"
 #   # load_if_present "${s}" || true
 #   try_load "${s}" || true
 # done
-spack load py-pip py-setuptools py-wheel py-pkgconfig py-numpy py-h5py py-icesee py-cython py-petsc4py || warn "Failed to load some core python packages (continuing)"
+spack load py-pip py-wheel py-pkgconfig py-numpy py-h5py py-icesee py-cython || warn "Failed to load some core python packages (continuing)"
 
-# Load only installed py-* packages from the environment (generic)
-# for spec in $("${SPACK_EXE}" -e "${ENV_DIR}" find --format "{name}" 2>/dev/null); do
-#   if [[ "${spec}" == py-* ]]; then
-#     try_load "${spec}" || true
-#   fi
-# done
+if [[ "${ICESEE_LOAD_SPACK_PETSC4PY:-0}" == "1" ]]; then
+  try_load py-petsc4py || true
+fi
 
 # Hard-pin python to the Spack python install prefix (extra robust)
 SPACK_PY_PREFIX="$("${SPACK_EXE}" -e "${ENV_DIR}" location -i python 2>/dev/null || true)"
@@ -155,6 +152,29 @@ fi
 # DEV: allow importing the in-repo ICESEE package (repo root contains ICESEE/)
 export PYTHONPATH="${ROOT}:${PYTHONPATH:-}"
 export OMP_NUM_THREADS=1
+
+# ---------------------------------------------------------
+# Auto-detect and activate Firedrake/Icepack environment
+# ---------------------------------------------------------
+FIREDRAKE_VENV="${ROOT}/venv-firedrake"
+
+if [[ -f "${FIREDRAKE_VENV}/bin/activate" ]]; then
+  info "Detected Firedrake venv → activating: ${FIREDRAKE_VENV}"
+
+  # shellcheck disable=SC1090
+  source "${FIREDRAKE_VENV}/bin/activate"
+
+  # Force Python to venv
+  export PYTHON="${FIREDRAKE_VENV}/bin/python"
+  export PATH="${FIREDRAKE_VENV}/bin:${PATH}"
+
+  # IMPORTANT: ensure Firedrake's petsc4py wins
+  unset PYTHONPATH 2>/dev/null || true
+
+else
+  info "No Firedrake venv detected → using Spack Python"
+  source "${FIREDRAKE_VENV}/bin/activate"
+fi
 
 info "Activated env at: ${ENV_DIR}"
 echo "  spack   : ${SPACK_EXE}"
