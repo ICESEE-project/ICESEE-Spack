@@ -46,9 +46,9 @@ ICESEE_SPACK_CACHE="${ICESEE_SPACK_CACHE:-$ROOT/.icesee-spack/cache}"
 WANT_GCC="${WANT_GCC:-13}"
 MODULE_GCC="${MODULE_GCC:-gcc/${WANT_GCC}}"
 
-OPENMPI_VERSION="${OPENMPI_VERSION:-5.0.7}"
+# OPENMPI_VERSION="${OPENMPI_VERSION:-5.0.7}"
 ICESEE_EXTERNALS_ROOT="${ICESEE_EXTERNALS_ROOT:-$ROOT/.icesee-spack/externals}"
-OPENMPI_PREFIX="${OPENMPI_PREFIX:-$ICESEE_EXTERNALS_ROOT/openmpi-${OPENMPI_VERSION}}"
+# OPENMPI_PREFIX="${OPENMPI_PREFIX:-$ICESEE_EXTERNALS_ROOT/openmpi-${OPENMPI_VERSION}}"
 
 SLURM_DIR="${SLURM_DIR:-}"
 PMIX_DIR="${PMIX_DIR:-}"
@@ -157,14 +157,34 @@ $SPACK_CMD -e "${ENV_DIR}" info py-icesee >/dev/null 2>&1 || {
 }
 
 # 7) Ensure OpenMPI exists at OPENMPI_PREFIX (build if missing)
-msg "Ensuring OpenMPI ${OPENMPI_VERSION} at ${OPENMPI_PREFIX}..."
-export OPENMPI_VERSION OPENMPI_PREFIX JOBS MODULE_GCC SLURM_DIR PMIX_DIR
-export SPACK_CMD
-export SPACK_GCC_SPEC="gcc@${WANT_GCC}"
-bash "${ROOT}/scripts/build_openmpi.sh"
+# msg "Ensuring OpenMPI ${OPENMPI_VERSION} at ${OPENMPI_PREFIX}..."
+# export OPENMPI_VERSION OPENMPI_PREFIX JOBS MODULE_GCC SLURM_DIR PMIX_DIR
+# export SPACK_CMD
+# export SPACK_GCC_SPEC="gcc@${WANT_GCC}"
+# bash "${ROOT}/scripts/build_openmpi.sh"
 
 # Register OpenMPI as a Spack external for THIS environment (so concretize uses it)
-msg "Registering OpenMPI external in env packages.yaml..."
+# msg "Registering OpenMPI external in env packages.yaml..."
+# ENV_PACKAGES_YAML="${ENV_CFG_DIR}/packages.yaml"
+# gcc_ver_full="$(gcc -dumpfullversion -dumpversion 2>/dev/null | head -n1 || true)"
+# gcc_spec="gcc@${gcc_ver_full:-${WANT_GCC}}"
+
+# cat > "${ENV_PACKAGES_YAML}" <<EOF
+# packages:
+#   all:
+#     compiler: [${gcc_spec}]
+#   mpi:
+#     buildable: false
+#     providers:
+#       mpi: [openmpi]
+#   openmpi:
+#     buildable: false
+#     externals:
+#     - spec: openmpi@${OPENMPI_VERSION}%${gcc_spec}
+#       prefix: ${OPENMPI_PREFIX}
+# EOF
+
+msg "Configuring Spack OpenMPI provider in env packages.yaml..."
 ENV_PACKAGES_YAML="${ENV_CFG_DIR}/packages.yaml"
 gcc_ver_full="$(gcc -dumpfullversion -dumpversion 2>/dev/null | head -n1 || true)"
 gcc_spec="gcc@${gcc_ver_full:-${WANT_GCC}}"
@@ -174,14 +194,10 @@ packages:
   all:
     compiler: [${gcc_spec}]
   mpi:
-    buildable: false
     providers:
       mpi: [openmpi]
   openmpi:
-    buildable: false
-    externals:
-    - spec: openmpi@${OPENMPI_VERSION}%${gcc_spec}
-      prefix: ${OPENMPI_PREFIX}
+    buildable: true
 EOF
 
 msg "Wrote ${ENV_PACKAGES_YAML}:"
@@ -193,6 +209,10 @@ $SPACK_CMD -e "${ENV_DIR}" concretize -f
 
 msg "Installing (-j ${JOBS})..."
 $SPACK_CMD -e "${ENV_DIR}" install -j "${JOBS}"
+
+OPENMPI_PREFIX="$($SPACK_CMD -e "${ENV_DIR}" location -i openmpi@5.0.10)"
+export OPENMPI_PREFIX
+msg "Using Spack OpenMPI: ${OPENMPI_PREFIX}"
 
 # Develop ICESEE from pinned submodule (so spack uses your source), if present
 if [[ -f "${ICESEE_SUBMODULE}/pyproject.toml" ]]; then
@@ -266,104 +286,75 @@ fi
 
 
 # ---------------------------------------------
-# firedrake install (PETSc only, no python deps)
-# ----------------------------------------------
+# Firedrake install
+# ---------------------------------------------
 if [[ "${WITH_FIREDRAKE}" -eq 1 ]]; then
-  msg "Installing Firedrake into Spack Python (no venv)..."
+  msg "Installing Firedrake into isolated venv..."
+
   source "${ROOT}/spack/share/spack/setup-env.sh"
   spack env activate -d "${ENV_DIR}"
 
-  # Put external OpenMPI first (so mpicc/mpirun exist)
-  export MODULE_GCC="${MODULE_GCC:-gcc/${WANT_GCC:-13}}"
-  export PATH="${OPENMPI_PREFIX}/bin:${PATH}"
-  export LD_LIBRARY_PATH="${OPENMPI_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
-  # (Optional) constraints file to keep Firedrake tooling stable
-  CONSTRAINTS="${ROOT}/requirements/firedrake-constraints.txt"
-cat > "${CONSTRAINTS}" <<EOF
-setuptools<81
-numpy<2
-petsc4py==3.24.0
-EOF
-
-  # "$PYTHON" "${ROOT}/scripts/install_firedrake.py"
-  module purge || true
-  export MODULE_GCC="${MODULE_GCC:-gcc/${WANT_GCC:-13}}"
-  export OPENMPI_PREFIX
-    PETSC_DIR="$(spack -e "${ENV_DIR}" location -i petsc)"
-  export PETSC_DIR
-  unset PETSC_ARCH
-  # export PETSC_ARCH="arch-firedrake-default"
-  export HDF5_MPI=ON
-
-  #   # Get Spack's MPI wrappers (the ones PETSc was built with)
-  MPICC="$(spack -e "${ENV_DIR}" location -i openmpi)/bin/mpicc"
-  MPICXX="$(spack -e "${ENV_DIR}" location -i openmpi)/bin/mpicxx"
-  MPIFC="$(spack -e "${ENV_DIR}" location -i openmpi)/bin/mpifort"
-
+  PETSC_DIR="$(spack -e "${ENV_DIR}" location -i petsc@3.24.0)"
   MPI_DIR="$(spack -e "${ENV_DIR}" location -i openmpi)"
+  PYTHON_PREFIX="$(spack -e "${ENV_DIR}" location -i python)"
+  PYTHON="${PYTHON_PREFIX}/bin/python3"
+
+  [[ -x "${PYTHON}" ]] || die "Python executable not found: ${PYTHON}"
+  [[ -d "${MPI_DIR}" ]] || die "OpenMPI prefix not found: ${MPI_DIR}"
+  [[ -d "${PETSC_DIR}" ]] || die "PETSc prefix not found: ${PETSC_DIR}"
+
   export PATH="${MPI_DIR}/bin:${PATH}"
-  export LD_LIBRARY_PATH="${MPI_DIR}/lib:${LD_LIBRARY_PATH:-}"
+  export LD_LIBRARY_PATH="${MPI_DIR}/lib:${PETSC_DIR}/lib:${LD_LIBRARY_PATH:-}"
 
-  export CC="${MPICC}"
-  export CXX="${MPICXX}"
-  export FC="${MPIFC}"
-  export MPICC MPICXX MPIFC
+  export CC="${MPI_DIR}/bin/mpicc"
+  export CXX="${MPI_DIR}/bin/mpicxx"
+  export FC="${MPI_DIR}/bin/mpifort"
+
+  export MPICC="${MPI_DIR}/bin/mpicc"
+  export MPICXX="${MPI_DIR}/bin/mpicxx"
+  export MPIFC="${MPI_DIR}/bin/mpifort"
+
+  export PETSC_DIR="${PETSC_DIR}"
+  export HDF5_MPI=ON
   export OMP_NUM_THREADS=1
-
-  # GCC_PREFIX="$(spack -e .spack-env/icesee location -i gcc@13.4.0 2>/dev/null || true)"
-  # if [[ -z "$GCC_PREFIX" ]]; then
-  #   GCC_BIN="$(spack -e .spack-env/icesee compiler find >/dev/null 2>&1; spack -e .spack-env/icesee compiler info gcc@13.4.0 2>/dev/null | awk '/cc =/{print $3}' | head -n1)"
-  #   GCC_PREFIX="$(dirname "$(dirname "$GCC_BIN")")"
-  # fi
-
-  # export LD_LIBRARY_PATH="$GCC_PREFIX/lib64:$GCC_PREFIX/lib:${LD_LIBRARY_PATH:-}"
-
-  # Find the compiler used by the env (first concrete compiler entry)
-  GCC_BIN="$(
-    spack -e "${ENV_DIR}" compiler info gcc 2>/dev/null \
-    | awk '/cc =/{print $3; exit}'
-  )"
-
-  # If Spack doesn't know, fall back to whatever "gcc" is
-  if [[ -z "${GCC_BIN}" ]]; then
-    GCC_BIN="$(command -v gcc)"
-  fi
-
-  GCC_PREFIX="$(dirname "$(dirname "${GCC_BIN}")")"
-
-  # Prepend runtime libs (libstdc++)
-  export LD_LIBRARY_PATH="${GCC_PREFIX}/lib64:${GCC_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
-
-  echo "Using GCC_BIN=${GCC_BIN}"
-  echo "Using GCC_PREFIX=${GCC_PREFIX}"
-
-  msg "Using mpicc: ${MPICC}"
-  "${MPICC}" --showme:compile || true
+  unset PETSC_ARCH || true
 
   FIREDRAKE_VENV="${ROOT}/venv-firedrake"
-  
-  "$PYTHON" -m venv --system-site-packages "${FIREDRAKE_VENV}"
-  source "${FIREDRAKE_VENV}/bin/activate"
-  
-  # IMPORTANT: after activating the venv, reset PYTHON to the venv python
-  PYTHON="${FIREDRAKE_VENV}/bin/python"
-  
-  "$PYTHON" -m pip cache purge
-  "$PYTHON" -m pip install -U pip wheel
-  "$PYTHON" -m pip install "${SETUPTOOLS_CONSTRAINT}" "${NUMPY_CONSTRAINT}"
 
-  cat > constraints.txt <<EOF
+  if [[ -d "${FIREDRAKE_VENV}" ]]; then
+    msg "Removing existing Firedrake venv: ${FIREDRAKE_VENV}"
+    rm -rf "${FIREDRAKE_VENV}"
+  fi
+
+  msg "Creating Firedrake virtual environment"
+  "${PYTHON}" -m venv --system-site-packages "${FIREDRAKE_VENV}"
+
+  source "${FIREDRAKE_VENV}/bin/activate"
+  PYTHON="${FIREDRAKE_VENV}/bin/python"
+
+  msg "Upgrading pip tooling"
+  "${PYTHON}" -m ensurepip --upgrade || true
+  "${PYTHON}" -m pip install --upgrade "pip<26" "setuptools<81" wheel
+
+  CONSTRAINTS="${ROOT}/requirements/firedrake-constraints.txt"
+  cat > "${CONSTRAINTS}" <<EOF
 setuptools<81
 numpy<2
 petsc4py==3.24.0
 EOF
-  export PIP_CONSTRAINT=constraints.txt
+
+  export PIP_CONSTRAINT="${CONSTRAINTS}"
 
   FIREDRAKE_VERSION="${FIREDRAKE_VERSION:-2025.10.2}"
+
   msg "Installing Firedrake ${FIREDRAKE_VERSION}"
-  #  install firedrake
-  # "$PYTHON" -m pip install "firedrake[check]==${FIREDRAKE_VERSION}"
-  "$PYTHON" -m pip install --no-build-isolation "firedrake[check]==${FIREDRAKE_VERSION}"
+  "${PYTHON}" -m pip install "firedrake[check]==${FIREDRAKE_VERSION}"
+
+  msg "Running Firedrake sanity checks"
+  "${PYTHON}" -c "import firedrake; print('firedrake import OK:', firedrake.__file__)"
+  "${PYTHON}" -c "import petsc4py; print('petsc4py import OK:', petsc4py.__file__)"
+  "${PYTHON}" -c "from mpi4py import MPI; print('mpi4py OK:', MPI.Get_version())"
+
 else
   msg "Skipping Firedrake install (use --with-firedrake to enable)."
 fi
@@ -429,6 +420,6 @@ fi
 
 msg "Install complete."
 msg "Prefix: ${ICESEE_SPACK_PREFIX}"
-msg "OpenMPI: ${OPENMPI_PREFIX}"
+msg "OpenMPI: $($SPACK_CMD -e "${ENV_DIR}" location -i openmpi@5.0.10 2>/dev/null || echo '<not installed>')"
 msg "To use the environment:"
 msg "  source ${ROOT}/scripts/activate.sh"
