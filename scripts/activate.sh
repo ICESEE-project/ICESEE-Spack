@@ -123,19 +123,32 @@ if [[ -n "${SPACK_PY_PREFIX}" && -x "${SPACK_PY_PREFIX}/bin/python" ]]; then
 fi
 
 # Force our external OpenMPI to win (ISSM/PETSc sometimes inject their mpirun first)
-if [[ -d "${OPENMPI_PREFIX}" ]]; then
-  export PATH="${OPENMPI_PREFIX}/bin:${PATH}"
-  export LD_LIBRARY_PATH="${OPENMPI_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
-else
-  warn "External OpenMPI not found: ${OPENMPI_PREFIX}"
-fi
+# if [[ -d "${OPENMPI_PREFIX}" ]]; then
+#   export PATH="${OPENMPI_PREFIX}/bin:${PATH}"
+#   export LD_LIBRARY_PATH="${OPENMPI_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
+# else
+#   warn "External OpenMPI not found: ${OPENMPI_PREFIX}"
+# fi
 
 # force spack mpi to use our OpenMPI (if present)
 module purge 2>/dev/null || true
 module load matlab || true 
-MPI_DIR="$(spack -e "${ENV_DIR}" location -i openmpi)"
-export PATH="${MPI_DIR}/bin:${PATH}"
-export LD_LIBRARY_PATH="${MPI_DIR}/lib:${LD_LIBRARY_PATH:-}"
+# MPI_DIR="$(spack -e "${ENV_DIR}" location -i openmpi)"
+# export PATH="${MPI_DIR}/bin:${PATH}"
+# export LD_LIBRARY_PATH="${MPI_DIR}/lib:${LD_LIBRARY_PATH:-}"
+
+# -----------------------------------
+# Use Spack-provided OpenMPI ONLY
+# -----------------------------------
+MPI_DIR="$("${SPACK_EXE}" -e "${ENV_DIR}" location -i openmpi 2>/dev/null || true)"
+
+if [[ -n "${MPI_DIR}" && -d "${MPI_DIR}" ]]; then
+  export PATH="${MPI_DIR}/bin:${PATH}"
+  export LD_LIBRARY_PATH="${MPI_DIR}/lib:${LD_LIBRARY_PATH:-}"
+  info "Using Spack OpenMPI: ${MPI_DIR}"
+else
+  warn "OpenMPI not found in Spack env"
+fi
 
 # Ensure MATLAB uses GCC13 libstdc++ (fix mex GLIBCXX_3.4.31)
 if command -v spack >/dev/null 2>&1; then
@@ -159,21 +172,18 @@ export OMP_NUM_THREADS=1
 FIREDRAKE_VENV="${ROOT}/venv-firedrake"
 
 if [[ -f "${FIREDRAKE_VENV}/bin/activate" ]]; then
-  info "Detected Firedrake venv → activating: ${FIREDRAKE_VENV}"
+  info "Activating Firedrake venv: ${FIREDRAKE_VENV}"
 
-  # shellcheck disable=SC1090
   source "${FIREDRAKE_VENV}/bin/activate"
 
-  # Force Python to venv
-  export PYTHON="${FIREDRAKE_VENV}/bin/python"
   export PATH="${FIREDRAKE_VENV}/bin:${PATH}"
+  export PYTHON="${FIREDRAKE_VENV}/bin/python"
 
-  # IMPORTANT: ensure Firedrake's petsc4py wins
-  unset PYTHONPATH 2>/dev/null || true
+  # IMPORTANT: prepend instead of wiping
+  export PYTHONPATH="${FIREDRAKE_VENV}/lib/python3.11/site-packages:${PYTHONPATH:-}"
 
 else
-  info "No Firedrake venv detected → using Spack Python"
-  source "${FIREDRAKE_VENV}/bin/activate"
+  info "No Firedrake venv → using Spack Python"
 fi
 
 info "Activated env at: ${ENV_DIR}"
