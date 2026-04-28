@@ -59,10 +59,12 @@ export SPACK_USER_CONFIG_PATH="${SPACK_USER_CONFIG_PATH:-$ROOT/.spack-user-empty
 mkdir -p "$SPACK_USER_CONFIG_PATH"
 
 # Ensure git submodules exist
-if [[ -d "${ROOT}/.git" ]]; then
-  msg "Updating submodules..."
-  git -C "${ROOT}" submodule update --init --recursive
-fi
+#if [[ -d "${ROOT}/.git" ]]; then
+#  msg "Updating submodules..."
+#  git -C "${ROOT}" submodule update --init --recursive
+#fi
+[[ -f "${ROOT}/ICESEE/pyproject.toml" ]] || die "Vendored ICESEE not found at ${ROOT}/ICESEE"
+[[ -f "${ROOT}/spack/share/spack/setup-env.sh" ]] || die "Vendored Spack not found at ${ROOT}/spack"
 
 # Choose Spack: system first, else pinned submodule
 if have_cmd spack; then
