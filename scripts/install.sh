@@ -72,7 +72,7 @@ if have_cmd spack; then
   SPACK_BIN="spack"
 else
   [[ -f "${ROOT}/spack/share/spack/setup-env.sh" ]] || die "No system spack and no ./spack submodule"
-  msg "Using pinned Spack submodule: ${ROOT}/spack"
+  msg "Using pinned Spack subtree: ${ROOT}/spack"
   # shellcheck disable=SC1091
   source "${ROOT}/spack/share/spack/setup-env.sh"
   SPACK_BIN="spack"
