@@ -162,33 +162,6 @@ $SPACK_CMD -e "${ENV_DIR}" info py-icesee >/dev/null 2>&1 || {
   die "py-icesee not visible to Spack (repo.yaml/path problem)."
 }
 
-# 7) Ensure OpenMPI exists at OPENMPI_PREFIX (build if missing)
-# msg "Ensuring OpenMPI ${OPENMPI_VERSION} at ${OPENMPI_PREFIX}..."
-# export OPENMPI_VERSION OPENMPI_PREFIX JOBS MODULE_GCC SLURM_DIR PMIX_DIR
-# export SPACK_CMD
-# export SPACK_GCC_SPEC="gcc@${WANT_GCC}"
-# bash "${ROOT}/scripts/build_openmpi.sh"
-
-# Register OpenMPI as a Spack external for THIS environment (so concretize uses it)
-# msg "Registering OpenMPI external in env packages.yaml..."
-# ENV_PACKAGES_YAML="${ENV_CFG_DIR}/packages.yaml"
-# gcc_ver_full="$(gcc -dumpfullversion -dumpversion 2>/dev/null | head -n1 || true)"
-# gcc_spec="gcc@${gcc_ver_full:-${WANT_GCC}}"
-
-# cat > "${ENV_PACKAGES_YAML}" <<EOF
-# packages:
-#   all:
-#     compiler: [${gcc_spec}]
-#   mpi:
-#     buildable: false
-#     providers:
-#       mpi: [openmpi]
-#   openmpi:
-#     buildable: false
-#     externals:
-#     - spec: openmpi@${OPENMPI_VERSION}%${gcc_spec}
-#       prefix: ${OPENMPI_PREFIX}
-# EOF
 
 msg "Configuring Spack OpenMPI provider in env packages.yaml..."
 ENV_PACKAGES_YAML="${ENV_CFG_DIR}/packages.yaml"
@@ -295,120 +268,22 @@ fi
 # Firedrake install
 # ---------------------------------------------
 if [[ "${WITH_FIREDRAKE}" -eq 1 ]]; then
-  msg "Installing Firedrake into isolated venv..."
-
-  source "${ROOT}/spack/share/spack/setup-env.sh"
-  spack env activate -d "${ENV_DIR}"
-
-  PETSC_DIR="$(spack -e "${ENV_DIR}" location -i petsc@3.24.0)"
-  MPI_DIR="$(spack -e "${ENV_DIR}" location -i openmpi)"
-  PYTHON_PREFIX="$(spack -e "${ENV_DIR}" location -i python)"
-  PYTHON="${PYTHON_PREFIX}/bin/python3"
-
-  [[ -x "${PYTHON}" ]] || die "Python executable not found: ${PYTHON}"
-  [[ -d "${MPI_DIR}" ]] || die "OpenMPI prefix not found: ${MPI_DIR}"
-  [[ -d "${PETSC_DIR}" ]] || die "PETSc prefix not found: ${PETSC_DIR}"
-
-  export PATH="${MPI_DIR}/bin:${PATH}"
-  export LD_LIBRARY_PATH="${MPI_DIR}/lib:${PETSC_DIR}/lib:${LD_LIBRARY_PATH:-}"
-
-  export CC="${MPI_DIR}/bin/mpicc"
-  export CXX="${MPI_DIR}/bin/mpicxx"
-  export FC="${MPI_DIR}/bin/mpifort"
-
-  export MPICC="${MPI_DIR}/bin/mpicc"
-  export MPICXX="${MPI_DIR}/bin/mpicxx"
-  export MPIFC="${MPI_DIR}/bin/mpifort"
-
-  export PETSC_DIR="${PETSC_DIR}"
-  export HDF5_MPI=ON
-  export OMP_NUM_THREADS=1
-  unset PETSC_ARCH || true
-
-  FIREDRAKE_VENV="${ROOT}/venv-firedrake"
-
-  if [[ -d "${FIREDRAKE_VENV}" ]]; then
-    msg "Removing existing Firedrake venv: ${FIREDRAKE_VENV}"
-    rm -rf "${FIREDRAKE_VENV}"
-  fi
-
-  msg "Creating Firedrake virtual environment"
-  "${PYTHON}" -m venv --system-site-packages "${FIREDRAKE_VENV}"
-
-  source "${FIREDRAKE_VENV}/bin/activate"
-  PYTHON="${FIREDRAKE_VENV}/bin/python"
-
-  msg "Upgrading pip tooling"
-  "${PYTHON}" -m ensurepip --upgrade || true
-  "${PYTHON}" -m pip install --upgrade "pip<26" "setuptools<81" wheel
-
-  CONSTRAINTS="${ROOT}/requirements/firedrake-constraints.txt"
-  cat > "${CONSTRAINTS}" <<EOF
-setuptools<81
-numpy<2
-petsc4py==3.24.0
-EOF
-
-  export PIP_CONSTRAINT="${CONSTRAINTS}"
-
-  FIREDRAKE_VERSION="${FIREDRAKE_VERSION:-2025.10.2}"
-
-  msg "Installing Firedrake ${FIREDRAKE_VERSION}"
-  "${PYTHON}" -m pip install "firedrake[check]==${FIREDRAKE_VERSION}"
-
-  msg "Running Firedrake sanity checks"
-  "${PYTHON}" -c "import firedrake; print('firedrake import OK:', firedrake.__file__)"
-  "${PYTHON}" -c "import petsc4py; print('petsc4py import OK:', petsc4py.__file__)"
-  "${PYTHON}" -c "from mpi4py import MPI; print('mpi4py OK:', MPI.Get_version())"
-
+  msg "Installing Firedrake (--with-firedrake/--with-icepack enabled)..."
+  bash "${ROOT}/scripts/build_firedrake.sh"
 else
-  msg "Skipping Firedrake install (use --with-firedrake to enable)."
+  msg "Skipping Firedrake install (use --with-firedrake or --with-icepack to enable)."
 fi
 
 # --------------------------------------------------------
-# Icepack install (installs firedrake deps + icepack itself)
+# Icepack install
 # --------------------------------------------------------
 if [[ "${WITH_ICEPACK}" -eq 1 ]]; then
-  msg "Installing Icepack into Spack Python (no venv)..."
-  source "${ROOT}/spack/share/spack/setup-env.sh"
-  spack env activate -d "${ENV_DIR}"
-
-  # source firedrake venv to get deps + env vars
-  FIREDRAKE_VENV="${ROOT}/venv-firedrake"
-  source "${FIREDRAKE_VENV}/bin/activate"
-  PYTHON="${FIREDRAKE_VENV}/bin/python"
-  export OMP_NUM_THREADS=1
-
-  # install patchelf
-  "$PYTHON" -m pip install "${SETUPTOOLS_CONSTRAINT}" "${NUMPY_CONSTRAINT}"
-  "$PYTHON" -m pip install patchelf
-
-  # clone icepack repo if icepack is missing (uses main branch by default)
-  ICEPACK_DIR="${ICEPACK_DIR:-$ROOT/icepack}"
-  ICEPACK_REPO="git clone https://github.com/icepack/icepack.git"
-  if [[ ! -d "${ICEPACK_DIR}/.git" ]]; then
-    msg "Cloning Icepack repo into ${ICEPACK_DIR}..."
-    eval "${ICEPACK_REPO}"
-  else
-    msg "Icepack repo already exists at ${ICEPACK_DIR}; skipping clone."
-  fi
-
-  # install icepack into the same python environment as firedrake (no venv, so spack deps are visible)
-  msg "Installing Icepack from ${ICEPACK_DIR} into Spack Python environment..."
-  "$PYTHON" -m pip install --editable "${ICEPACK_DIR}"
-
-  # Install the jupyter kenrnel
-  msg "Installing Icepack Jupyter kernel..."
-  "$PYTHON" -m pip install ipykernel
-  "$PYTHON" -m ipykernel install --user --name=firedrake
-
-  # pypi gmsh
-  msg "Installing gmsh Python API from PyPI..."
-  "$PYTHON" -m pip install gmsh
-
+  msg "Installing Icepack (--with-icepack enabled)..."
+  bash "${ROOT}/scripts/build_icepack.sh"
 else
   msg "Skipping Icepack install (use --with-icepack to enable)."
 fi
+
 
 # Smoke tests
 msg "Running smoke tests..."
