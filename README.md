@@ -4,8 +4,7 @@ Spack-based installer and environment manager for **ICESEE** and its
 scientific dependencies (MPI, PETSc, HDF5, Python, etc.), designed for
 HPC clusters.
 
-This repository provides: - A reproducible Spack environment - Automated
-OpenMPI bootstrapping (if system MPI is unavailable) - Optional ISSM,
+This repository provides: - A reproducible Spack environment with petsc, openmpi and hdf5 - Optional ISSM,
 Firedrake, and Icepack integration - Clean separation between
 Spack-managed and pip-only Python dependencies
 
@@ -14,11 +13,7 @@ Spack-managed and pip-only Python dependencies
 # Quick Start (Recommended)
 
 ``` bash
-git clone --recurse-submodules https://github.com/ICESEE-project/ICESEE-Spack.git
-cd ICESEE-Spack
-
-SLURM_DIR=/opt/slurm/current PMIX_DIR=/opt/pmix/5.0.1 \
-./scripts/install.sh
+git clone https://github.com/ICESEE-project/ICESEE-Spack.git && cd ICESEE-Spack && ./scripts/install.sh
 ```
 >Note: Adjust SLURM_DIR and PMIX_DIR to match your system if needed.
 
@@ -52,7 +47,7 @@ PETSc
 Requires MATLAB available on the cluster.
 
 ``` bash
-SLURM_DIR=/opt/slurm/current PMIX_DIR=/opt/pmix/5.0.1 ./scripts/install.sh --with-issm
+./scripts/install.sh --with-issm
 ```
 
 ---
@@ -62,7 +57,7 @@ SLURM_DIR=/opt/slurm/current PMIX_DIR=/opt/pmix/5.0.1 ./scripts/install.sh --wit
 Installs Firedrake using: - PETSc built via Spack - MPI built via Spack
 
 ``` bash
-SLURM_DIR=/opt/slurm/current PMIX_DIR=/opt/pmix/5.0.1 ./scripts/install.sh --with-firedrake
+./scripts/install.sh --with-firedrake
 ```
 
 ---
@@ -72,7 +67,7 @@ SLURM_DIR=/opt/slurm/current PMIX_DIR=/opt/pmix/5.0.1 ./scripts/install.sh --wit
 Installs: - Firedrake - Icepack (depends on Firedrake)
 
 ``` bash
-SLURM_DIR=/opt/slurm/current PMIX_DIR=/opt/pmix/5.0.1 ./scripts/install.sh --with-icepack
+./scripts/install.sh --with-icepack
 ```
 
 ---
