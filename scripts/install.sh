@@ -162,33 +162,6 @@ $SPACK_CMD -e "${ENV_DIR}" info py-icesee >/dev/null 2>&1 || {
   die "py-icesee not visible to Spack (repo.yaml/path problem)."
 }
 
-# 7) Ensure OpenMPI exists at OPENMPI_PREFIX (build if missing)
-# msg "Ensuring OpenMPI ${OPENMPI_VERSION} at ${OPENMPI_PREFIX}..."
-# export OPENMPI_VERSION OPENMPI_PREFIX JOBS MODULE_GCC SLURM_DIR PMIX_DIR
-# export SPACK_CMD
-# export SPACK_GCC_SPEC="gcc@${WANT_GCC}"
-# bash "${ROOT}/scripts/build_openmpi.sh"
-
-# Register OpenMPI as a Spack external for THIS environment (so concretize uses it)
-# msg "Registering OpenMPI external in env packages.yaml..."
-# ENV_PACKAGES_YAML="${ENV_CFG_DIR}/packages.yaml"
-# gcc_ver_full="$(gcc -dumpfullversion -dumpversion 2>/dev/null | head -n1 || true)"
-# gcc_spec="gcc@${gcc_ver_full:-${WANT_GCC}}"
-
-# cat > "${ENV_PACKAGES_YAML}" <<EOF
-# packages:
-#   all:
-#     compiler: [${gcc_spec}]
-#   mpi:
-#     buildable: false
-#     providers:
-#       mpi: [openmpi]
-#   openmpi:
-#     buildable: false
-#     externals:
-#     - spec: openmpi@${OPENMPI_VERSION}%${gcc_spec}
-#       prefix: ${OPENMPI_PREFIX}
-# EOF
 
 msg "Configuring Spack OpenMPI provider in env packages.yaml..."
 ENV_PACKAGES_YAML="${ENV_CFG_DIR}/packages.yaml"
