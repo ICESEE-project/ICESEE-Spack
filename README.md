@@ -13,7 +13,7 @@ Spack-managed and pip-only Python dependencies
 # Quick Start (Recommended)
 
 ``` bash
-git clone https://github.com/ICESEE-project/ICESEE-Spack.git && cd ICESEE-Spack && ./scripts/install.sh
+git clone https://github.com/ICESEE-project/ICESEE-Spack.git && cd ICESEE-Spack && ./scripts/install.sh --with-issm --with-icepack
 ```
 >Note: Adjust SLURM_DIR and PMIX_DIR to match your system if needed.
 
