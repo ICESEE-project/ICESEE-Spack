@@ -15,7 +15,6 @@ Spack-managed and pip-only Python dependencies
 ``` bash
 git clone https://github.com/ICESEE-project/ICESEE-Spack.git && cd ICESEE-Spack && ./scripts/install.sh --with-issm --with-icepack
 ```
->Note: Adjust SLURM_DIR and PMIX_DIR to match your system if needed.
 
 After installation, activate the environment:
 
@@ -30,8 +29,7 @@ source scripts/activate.sh
 ## Default Install
 
 Installs: - ICESEE (from pinned submodule) - Python (via Spack) - PETSc
-(Spack-managed) - MPI-enabled HDF5 + h5py - OpenMPI (external or
-auto-built) - pip-only Python dependencies from ICESEE/pyproject.toml
+(Spack-managed) - MPI-enabled HDF5 + h5py - OpenMPI (auto-built) - pip-only Python dependencies from ICESEE/pyproject.toml
 
 ``` bash
 ./scripts/install.sh
@@ -59,7 +57,7 @@ Installs Firedrake using: - PETSc built via Spack - MPI built via Spack
 ``` bash
 ./scripts/install.sh --with-firedrake
 ```
-
+>Note: must be inside ICESEE-Spack.
 ---
 
 ## Install with Icepack
@@ -69,7 +67,7 @@ Installs: - Firedrake - Icepack (depends on Firedrake)
 ``` bash
 ./scripts/install.sh --with-icepack
 ```
-
+>Note: must be inside ICESEE-Spack.
 ---
 
 # Environment Activation
@@ -79,7 +77,8 @@ The environment is activated by sourcing:
 ``` bash
 source scripts/activate.sh
 ```
-
+>Note: must be inside ICESEE-Spack.
+>
 This ensures: - Spack environment is active - Correct Python is
 selected - Correct MPI (matching PETSc) is used - ISSM environment (if
 installed) is loaded
