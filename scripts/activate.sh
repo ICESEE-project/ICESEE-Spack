@@ -11,9 +11,7 @@ warn(){ echo "[ICESEE-Spack][WARN] $*" >&2; }
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_DIR="${ROOT}/.spack-env/icesee"
 
-OPENMPI_VERSION="${OPENMPI_VERSION:-5.0.7}"
 ICESEE_EXTERNALS_ROOT="${ICESEE_EXTERNALS_ROOT:-$ROOT/.icesee-spack/externals}"
-OPENMPI_PREFIX="${OPENMPI_PREFIX:-$ICESEE_EXTERNALS_ROOT/openmpi-${OPENMPI_VERSION}}"
 
 ISSM_DIR_DEFAULT="${ISSM_DIR:-$ICESEE_EXTERNALS_ROOT/ISSM}"
 MODULE_MATLAB="${MODULE_MATLAB:-matlab}"
@@ -109,14 +107,11 @@ info "PYTHONPATH: ${PYTHONPATH:-<empty>}"
 #   # load_if_present "${s}" || true
 #   try_load "${s}" || true
 # done
-spack load py-pip py-setuptools py-wheel py-pkgconfig py-numpy py-h5py py-icesee py-cython py-petsc4py || warn "Failed to load some core python packages (continuing)"
+spack load py-pip py-wheel py-pkgconfig py-numpy py-h5py py-icesee py-cython || warn "Failed to load some core python packages (continuing)"
 
-# Load only installed py-* packages from the environment (generic)
-# for spec in $("${SPACK_EXE}" -e "${ENV_DIR}" find --format "{name}" 2>/dev/null); do
-#   if [[ "${spec}" == py-* ]]; then
-#     try_load "${spec}" || true
-#   fi
-# done
+if [[ "${ICESEE_LOAD_SPACK_PETSC4PY:-0}" == "1" ]]; then
+  try_load py-petsc4py || true
+fi
 
 # Hard-pin python to the Spack python install prefix (extra robust)
 SPACK_PY_PREFIX="$("${SPACK_EXE}" -e "${ENV_DIR}" location -i python 2>/dev/null || true)"
@@ -125,20 +120,22 @@ if [[ -n "${SPACK_PY_PREFIX}" && -x "${SPACK_PY_PREFIX}/bin/python" ]]; then
   # hash -r 2>/dev/null || true
 fi
 
-# Force our external OpenMPI to win (ISSM/PETSc sometimes inject their mpirun first)
-if [[ -d "${OPENMPI_PREFIX}" ]]; then
-  export PATH="${OPENMPI_PREFIX}/bin:${PATH}"
-  export LD_LIBRARY_PATH="${OPENMPI_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
-else
-  warn "External OpenMPI not found: ${OPENMPI_PREFIX}"
-fi
-
 # force spack mpi to use our OpenMPI (if present)
 module purge 2>/dev/null || true
 module load matlab || true 
-MPI_DIR="$(spack -e "${ENV_DIR}" location -i openmpi)"
-export PATH="${MPI_DIR}/bin:${PATH}"
-export LD_LIBRARY_PATH="${MPI_DIR}/lib:${LD_LIBRARY_PATH:-}"
+
+# -----------------------------------
+# Use Spack-provided OpenMPI ONLY
+# -----------------------------------
+MPI_DIR="$("${SPACK_EXE}" -e "${ENV_DIR}" location -i openmpi@5.0.10 2>/dev/null || true)"
+
+if [[ -n "${MPI_DIR}" && -d "${MPI_DIR}" ]]; then
+  export PATH="${MPI_DIR}/bin:${PATH}"
+  export LD_LIBRARY_PATH="${MPI_DIR}/lib:${LD_LIBRARY_PATH:-}"
+  info "Using Spack OpenMPI: ${MPI_DIR}"
+else
+  warn "OpenMPI not found in Spack env"
+fi
 
 # Ensure MATLAB uses GCC13 libstdc++ (fix mex GLIBCXX_3.4.31)
 if command -v spack >/dev/null 2>&1; then
@@ -155,6 +152,27 @@ fi
 # DEV: allow importing the in-repo ICESEE package (repo root contains ICESEE/)
 export PYTHONPATH="${ROOT}:${PYTHONPATH:-}"
 export OMP_NUM_THREADS=1
+
+# ---------------------------------------------------------
+# Auto-detect and activate Firedrake/Icepack environment
+# ---------------------------------------------------------
+FIREDRAKE_VENV="${ROOT}/venv-firedrake"
+
+if [[ -f "${FIREDRAKE_VENV}/bin/activate" ]]; then
+  info "Activating Firedrake/Icepack venv: ${FIREDRAKE_VENV}"
+
+  # shellcheck disable=SC1090
+  source "${FIREDRAKE_VENV}/bin/activate"
+
+  export PYTHON="${FIREDRAKE_VENV}/bin/python"
+  export PATH="${FIREDRAKE_VENV}/bin:${PATH}"
+
+  # Keep ICESEE source importable, but do NOT manually inject Firedrake site-packages.
+  export PYTHONPATH="${ROOT}:${ROOT}/ICESEE:${PYTHONPATH:-}"
+else
+  info "No Firedrake venv detected → using Spack Python"
+  export PYTHONPATH="${ROOT}:${ROOT}/ICESEE:${PYTHONPATH:-}"
+fi
 
 info "Activated env at: ${ENV_DIR}"
 echo "  spack   : ${SPACK_EXE}"
