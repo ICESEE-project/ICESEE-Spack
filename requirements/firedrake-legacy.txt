@@ -1,0 +1,10 @@
+setuptools<81
+numpy<2
+decorator==4.4.2
+petsc4py==3.23.4
+fenics-ufl==2025.1.0
+firedrake==2025.4.2
+firedrake-fiat==2025.4.2
+petsctools==2025.3
+pyadjoint-ad==2025.4.1
+loopy==2025.2

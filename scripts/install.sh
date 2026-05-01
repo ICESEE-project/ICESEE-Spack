@@ -32,7 +32,9 @@ JOBS=24
 
 SETUPTOOLS_CONSTRAINT="${SETUPTOOLS_CONSTRAINT:-setuptools<81}"
 NUMPY_CONSTRAINT="${NUMPY_CONSTRAINT:-numpy<2}"
-PETSC4PY_CONSTRAINT="${PETSC4PY_CONSTRAINT:-petsc4py==3.24.0}"
+PETSC_VERSION="${PETSC_VERSION:-3.23.4}"
+PETSC4PY_CONSTRAINT="${PETSC4PY_CONSTRAINT:-petsc4py==3.23.4}"
+FIREDRAKE_STACK="${FIREDRAKE_STACK:-legacy}"
 
 msg(){ echo "[ICESEE-Spack] $*"; }
 die(){ echo "[ICESEE-Spack][ERROR] $*" >&2; exit 1; }
@@ -190,8 +192,14 @@ msg "Installing (-j ${JOBS})..."
 $SPACK_CMD -e "${ENV_DIR}" install -j "${JOBS}"
 
 OPENMPI_PREFIX="$($SPACK_CMD -e "${ENV_DIR}" location -i openmpi)"
+PETSC_DIR="$($SPACK_CMD -e "${ENV_DIR}" location -i petsc@${PETSC_VERSION})"
+
 export OPENMPI_PREFIX
+export PETSC_DIR
+unset PETSC_ARCH || true
+
 msg "Using Spack OpenMPI: ${OPENMPI_PREFIX}"
+msg "Using Spack PETSc: ${PETSC_DIR}"
 
 # Develop ICESEE from pinned submodule (so spack uses your source), if present
 if [[ -f "${ICESEE_SUBMODULE}/pyproject.toml" ]]; then
@@ -269,6 +277,9 @@ fi
 # ---------------------------------------------
 if [[ "${WITH_FIREDRAKE}" -eq 1 ]]; then
   msg "Installing Firedrake (--with-firedrake/--with-icepack enabled)..."
+  FIREDRAKE_STACK="${FIREDRAKE_STACK}" \
+  PETSC_VERSION="${PETSC_VERSION}" \
+  PETSC4PY_CONSTRAINT="${PETSC4PY_CONSTRAINT}" \
   bash "${ROOT}/scripts/build_firedrake.sh"
 else
   msg "Skipping Firedrake install (use --with-firedrake or --with-icepack to enable)."
@@ -279,6 +290,7 @@ fi
 # --------------------------------------------------------
 if [[ "${WITH_ICEPACK}" -eq 1 ]]; then
   msg "Installing Icepack (--with-icepack enabled)..."
+  FIREDRAKE_STACK="${FIREDRAKE_STACK}" \
   bash "${ROOT}/scripts/build_icepack.sh"
 else
   msg "Skipping Icepack install (use --with-icepack to enable)."
@@ -302,5 +314,7 @@ fi
 msg "Install complete."
 msg "Prefix: ${ICESEE_SPACK_PREFIX}"
 msg "OpenMPI: $($SPACK_CMD -e "${ENV_DIR}" location -i openmpi 2>/dev/null || echo '<not installed>')"
+msg "PETSc: $($SPACK_CMD -e "${ENV_DIR}" location -i petsc@${PETSC_VERSION} 2>/dev/null || echo '<not installed>')"
+msg "Firedrake stack: ${FIREDRAKE_STACK}"
 msg "To use the environment:"
 msg "  source ${ROOT}/scripts/activate.sh"
