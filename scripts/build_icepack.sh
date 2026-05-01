@@ -7,7 +7,7 @@ die(){ echo "[build_icepack][ERROR] $*" >&2; exit 1; }
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 ICEPACK_REPO="${ICEPACK_REPO:-https://github.com/icepack/icepack.git}"
-ICEPACK_REF="${ICEPACK_REF:-main}"
+ICEPACK_REF="${ICEPACK_REF:-master}"
 ICEPACK_PREFIX="${ICEPACK_PREFIX:-${ROOT}/icepack}"
 FIREDRAKE_VENV="${ROOT}/venv-firedrake"
 
@@ -56,10 +56,10 @@ python -m pip install --no-cache-dir \
 python -m pip install --no-cache-dir "decorator==4.4.2"
 
 log "Installing Icepack editable without disturbing Firedrake deps"
-python -m pip install --no-deps --editable "${ICEPACK_PREFIX}"
+python -m pip install --editable "${ICEPACK_PREFIX}"
 
 log "Installing Jupyter kernel support without upgrading Firedrake pins"
-python -m pip install --no-cache-dir --no-deps ipykernel || true
+python -m pip install --no-cache-dir ipykernel || true
 
 if python -c "import ipykernel" >/dev/null 2>&1; then
   python -m ipykernel install --user --name=firedrake --display-name "Firedrake/Icepack"
