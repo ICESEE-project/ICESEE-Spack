@@ -127,7 +127,7 @@ module load matlab || true
 # -----------------------------------
 # Use Spack-provided OpenMPI ONLY
 # -----------------------------------
-MPI_DIR="$("${SPACK_EXE}" -e "${ENV_DIR}" location -i openmpi@5.0.10 2>/dev/null || true)"
+MPI_DIR="$("${SPACK_EXE}" -e "${ENV_DIR}" location -i openmpi 2>/dev/null || true)"
 
 if [[ -n "${MPI_DIR}" && -d "${MPI_DIR}" ]]; then
   export PATH="${MPI_DIR}/bin:${PATH}"
