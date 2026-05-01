@@ -189,7 +189,7 @@ $SPACK_CMD -e "${ENV_DIR}" concretize -f
 msg "Installing (-j ${JOBS})..."
 $SPACK_CMD -e "${ENV_DIR}" install -j "${JOBS}"
 
-OPENMPI_PREFIX="$($SPACK_CMD -e "${ENV_DIR}" location -i openmpi@5.0.10)"
+OPENMPI_PREFIX="$($SPACK_CMD -e "${ENV_DIR}" location -i openmpi)"
 export OPENMPI_PREFIX
 msg "Using Spack OpenMPI: ${OPENMPI_PREFIX}"
 
@@ -301,6 +301,6 @@ fi
 
 msg "Install complete."
 msg "Prefix: ${ICESEE_SPACK_PREFIX}"
-msg "OpenMPI: $($SPACK_CMD -e "${ENV_DIR}" location -i openmpi@5.0.10 2>/dev/null || echo '<not installed>')"
+msg "OpenMPI: $($SPACK_CMD -e "${ENV_DIR}" location -i openmpi 2>/dev/null || echo '<not installed>')"
 msg "To use the environment:"
 msg "  source ${ROOT}/scripts/activate.sh"

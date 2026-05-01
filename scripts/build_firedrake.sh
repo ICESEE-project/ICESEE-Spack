@@ -13,7 +13,7 @@ spack env activate -d "${ENV_DIR}"
 PYTHON_PREFIX="$(spack -e "${ENV_DIR}" location -i python)"
 PYTHON="${PYTHON_PREFIX}/bin/python3"
 PETSC_DIR="$(spack -e "${ENV_DIR}" location -i petsc@3.24.0)"
-MPI_DIR="$(spack -e "${ENV_DIR}" location -i openmpi@5.0.10)"
+MPI_DIR="$(spack -e "${ENV_DIR}" location -i openmpi)"
 
 [[ -x "${PYTHON}" ]] || die "Python executable not found: ${PYTHON}"
 [[ -d "${MPI_DIR}" ]] || die "OpenMPI prefix not found: ${MPI_DIR}"
