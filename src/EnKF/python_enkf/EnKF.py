@@ -20,20 +20,21 @@ from scipy.stats import multivariate_normal
 from ICESEE.src.parallelization.parallel_mpi.icesee_mpi_parallel_manager import ParallelManager
 from ICESEE.config._utility_imports import icesee_get_index
 from ICESEE.src.run_model_da._error_generation import generate_enkf_field
+from ICESEE.src.utils.random_streams import process_noise_seed
 
 
 # Move `worker` to global scope
 def worker(args):
     """Wrapper function for multiprocessing."""
-    ens_idx, ensemble_member, nd, Q_err, params, model_kwargs= args
-    return EnsembleKalmanFilter.forecast_step_single(ensemble_member[:, ens_idx], **model_kwargs)
+    ens_idx, ensemble_member, nd, Q_err, icesee_kwargs, icesee_kwargs= args
+    return EnsembleKalmanFilter.forecast_step_single(ensemble_member[:, ens_idx], **icesee_kwargs)
 
 class EnsembleKalmanFilter:
     def __init__(self, Observation_vec=None, Cov_obs=None, Cov_model=None, \
-                 Observation_function=None, Obs_Jacobian=None, parameters=None, taper_matrix=None, parallel_manager = None, parallel_flag="serial"):
+                 Observation_function=None, Obs_Jacobian=None, parameters=None, taper_matrix=None, parallel_manager=None, analysis_backend="serial"):
         """
         Initializes the Analysis class for the Ensemble Kalman Filter (EnKF).
-        
+
         Parameters:
         Observation_function: Callable - Observation function mapping state space to observation space.
         observation_vec: ndarray - Observation vector (m x 1).
@@ -41,8 +42,9 @@ class EnsembleKalmanFilter:
         Cov_obs: ndarray - Observation covariance matrix (m x m).
         Cov_model: ndarray - Model covariance matrix (n x n).
         taper: ndarray - Covariance taper matrix (n x n).
-        params: dict - Dictionary containing parameters like "m_obs" and others.\
-        parallel_flag: str - Flag for parallelization (serial,MPI, Dask, Ray, Multiprocessing).
+        icesee_kwargs: dict - Dictionary containing parameters like "m_obs" and others.\
+        analysis_backend: low-level analysis backend (serial, MPI_model, Dask,
+            Ray, Multiprocessing). This is not the top-level execution mode.
         """
         self.Observation_vec        = Observation_vec
         self.Cov_obs                = Cov_obs
@@ -51,82 +53,120 @@ class EnsembleKalmanFilter:
         self.parameters             = parameters
         self.taper_matrix           = taper_matrix
         self.Observation_function   = Observation_function
-        self.parallel_flag          = parallel_flag
+        self.analysis_backend       = analysis_backend
         self.parallel_manager       = parallel_manager
-    
+
+        # Per-member AR(1) process-noise state for the "serial" forecast
+        # backend, shape (state_block_size, Nens). Lazily allocated on the
+        # first forecast_step call (state_block_size/Nens are not known
+        # until then) and kept on this instance -- not threaded through
+        # icesee_kwargs -- so it persists correctly across the driver's
+        # repeated calls on this same EnKFclass object across timesteps,
+        # with one column per member that only that member's update ever
+        # writes to. See src/parallelization/_mpi_forecast_functions.py's
+        # per-member-checkpoint design for the equivalent mode-2 invariant.
+        self._process_noise_state = None
+
     # Forecast step
-    def forecast_step(self, ensemble=None, forecast_step_single=None, **model_kwargs):
+    def forecast_step(self, ensemble=None, forecast_step_single=None, **icesee_kwargs):
         """
         Forecast step for the Ensemble Kalman Filter (EnKF).
-        
+
         Parameters:
             forecast_step_single: Callable - Function for the forecast step of each ensemble member.
             Q_err: ndarray - Process noise matrix.
-            parallel_flag: str - Flag for parallelization (serial,MPI, Dask, Ray, Multiprocessing).
-            **model_kwargs: dict - Keyword arguments for the model.
-        
+            analysis_backend: low-level compute backend selected by the runner.
+            **icesee_kwargs: dict - Keyword arguments for the model.
+
         Returns:
             ensemble: ndarray - Updated ensemble matrix.
         """
-        Q_err = model_kwargs.get("Q_err")
-        L_C           = model_kwargs.get("L_C", None)
-        Lx             = model_kwargs.get("Lx", 1.0)
-        Ly             = model_kwargs.get("Ly", 1.0)
-        len_scale      = model_kwargs.get("len_scale", 1.0)
-        Q_rho          = model_kwargs.get("Q_rho", 1.0)
-        params         = model_kwargs.get("params", {})
-        alpha         = model_kwargs.get("alpha", 0.0)
-        dt             = model_kwargs.get("dt", 1.0)
-        rho           = model_kwargs.get("rho", 1.0)
-        noise         = model_kwargs.get("noise", None)
+        Q_err = icesee_kwargs.get("Q_err")
+        L_C           = icesee_kwargs.get("L_C", None)
+        Lx             = icesee_kwargs.get("Lx", 1.0)
+        Ly             = icesee_kwargs.get("Ly", 1.0)
+        len_scale      = icesee_kwargs.get("len_scale", 1.0)
+        Q_rho          = icesee_kwargs.get("Q_rho", 1.0)
+        alpha         = icesee_kwargs.get("alpha", 0.0)
+        dt             = icesee_kwargs.get("dt", 1.0)
+        rho           = icesee_kwargs.get("rho", 1.0)
+        base_seed      = icesee_kwargs.get("base_seed", 42)
+        k              = int(icesee_kwargs.get("k", 0))
 
-        
-        if re.match(r"\Aserial\Z", self.parallel_flag, re.IGNORECASE):
+
+        if re.match(r"\Aserial\Z", self.analysis_backend, re.IGNORECASE):
             # Serial forecast step
             nd, Nens = ensemble.shape # Get the number of ensemble members
-            if model_kwargs["joint_estimation"] or params["localization_flag"]:
-                hdim = ensemble.shape[0] // params["total_state_param_vars"]
+            if icesee_kwargs["joint_estimation"] or icesee_kwargs["localization_flag"]:
+                hdim = ensemble.shape[0] // icesee_kwargs["total_state_param_vars"]
             else:
-                hdim = ensemble.shape[0] // params["num_state_vars"]
-            state_block_size = hdim * params["num_state_vars"]
-            vecs, indx_map, dim_per_proc = icesee_get_index(**model_kwargs)
+                hdim = ensemble.shape[0] // icesee_kwargs["num_state_vars"]
+            state_block_size = hdim * icesee_kwargs["num_state_vars"]
+            vecs, indx_map, dim_per_proc = icesee_get_index(**icesee_kwargs)
+
+            # Independent per-member AR(1) process-noise state. One column
+            # per ensemble member -- updating member `ens` below only ever
+            # writes column `ens`, so members can never inherit each
+            # other's noise history, and iteration order cannot change the
+            # result. Zero-initialized on the first call, matching the AR(1)
+            # process's natural fresh-start condition.
+            if (
+                self._process_noise_state is None
+                or self._process_noise_state.shape != (state_block_size, Nens)
+            ):
+                self._process_noise_state = np.zeros((state_block_size, Nens))
+
             # Loop over the ensemble members
             for ens in range(Nens):
-                updated_state = forecast_step_single(ensemble=ensemble[:, ens], **model_kwargs)
+                updated_state = forecast_step_single(ensemble=ensemble[:, ens], **icesee_kwargs)
                 for key,value in updated_state.items():
                     ensemble[indx_map[key],ens] = value
 
                 # add process noise
                 noise_all = []
                 q0 = []
-                for ii, sig in enumerate(params["sig_Q"]):
-                    if ii <=params["num_state_vars"]:
-                        for jj, key in enumerate(model_kwargs['vec_inputs']):
-                            if ii == jj:
-                                model_kwargs.update({"ii_sig": ii, "Lx_dim": np.sqrt(Lx*Ly), "noise_dim": len(indx_map[key]), "hdim":hdim, "num_vars":params["total_state_param_vars"]})
-                                W = generate_enkf_field(**model_kwargs)
-                                noise_ = alpha*noise[indx_map[key]] + np.sqrt(1 - alpha**2)*W
-                                q0.append(noise_)
+                old_rng_state = np.random.get_state()
+                try:
+                    for ii, sig in enumerate(icesee_kwargs["sig_Q"]):
+                        if ii <=icesee_kwargs["num_state_vars"]:
+                            for jj, key in enumerate(icesee_kwargs['vec_inputs']):
+                                if ii == jj:
+                                    seed = process_noise_seed(base_seed, k, ens, ii)
+                                    np.random.seed(seed)
+                                    # Pass "rng" explicitly (not just "seed"): generate_enkf_field's
+                                    # own fallback prefers a pre-existing "base_seed" entry in
+                                    # icesee_kwargs over "seed" when both are present, which would
+                                    # silently defeat this per-(timestep,member,variable) reseed for
+                                    # any application config that sets base_seed explicitly (e.g.
+                                    # ISSM, icepack synthetic_ice_stream). An explicit "rng" bypasses
+                                    # that ambiguity entirely, matching generate_initial_member_increment's
+                                    # own pattern in _error_generation.py.
+                                    icesee_kwargs.update({"ii_sig": ii, "seed": seed, "rng": np.random.default_rng(seed), "Lx_dim": np.sqrt(Lx*Ly), "noise_dim": len(indx_map[key]), "hdim":hdim, "num_vars":icesee_kwargs["total_state_param_vars"]})
+                                    W = generate_enkf_field(**icesee_kwargs)
+                                    previous = self._process_noise_state[indx_map[key], ens]
+                                    noise_ = alpha*previous + np.sqrt(1 - alpha**2)*W
+                                    q0.append(noise_)
 
-                                Z = np.sqrt(dt)*sig*rho*noise_
-                                noise_all.append(Z)
-                            
+                                    Z = np.sqrt(dt)*sig*rho*noise_
+                                    noise_all.append(Z)
+                finally:
+                    np.random.set_state(old_rng_state)
+
                 noise_ = np.concatenate(noise_all, axis=0)
 
                 # only update the state variables with noise
-                for ii, key in enumerate(model_kwargs['vec_inputs']):
-                    if ii < params["num_state_vars"]:
+                for ii, key in enumerate(icesee_kwargs['vec_inputs']):
+                    if ii < icesee_kwargs["num_state_vars"]:
                         ensemble[indx_map[key],ens] += noise_[indx_map[key]]
 
                 # ensemble[:state_block_size,ens] += noise_[:state_block_size]
-                noise = np.concatenate(q0, axis=0)
-                model_kwargs.update({"noise": noise})
+                self._process_noise_state[:, ens] = np.concatenate(q0, axis=0)
                 del noise_all, q0, noise_, W
 
             return ensemble
 
         # Using divide and conquer parallelization with MPI for non-MPI application in forecast_step_single
-        elif re.match(r"\ANon-mpi-model\Z", self.parallel_flag, re.IGNORECASE):
+        elif re.match(r"\ANon-mpi-model\Z", self.analysis_backend, re.IGNORECASE):
             """
             Called only when the numerical model in the forecast step is not MPI parallelized
             """
@@ -151,7 +191,7 @@ class EnsembleKalmanFilter:
 
             # Perform forecast step
             for ens in range(local_ensemble.shape[1]):
-                local_ensemble[:, ens] = forecast_step_single(ensemble=local_ensemble[:,ens], **model_kwargs)
+                local_ensemble[:, ens] = forecast_step_single(ensemble=local_ensemble[:,ens], **icesee_kwargs)
 
             # Avoid gather; update ensemble in place
             gathered_ensemble = comm.allgather(local_ensemble)
@@ -163,9 +203,9 @@ class EnsembleKalmanFilter:
                 ensemble = None
 
             return ensemble
-        
+
         # Using MPI split communicator for MPI application in forecast_step_single
-        elif re.match(r"\AMPI_model\Z", self.parallel_flag, re.IGNORECASE):
+        elif re.match(r"\AMPI_model\Z", self.analysis_backend, re.IGNORECASE):
             """
             if the numerical model ran in the forecast step is MPI parallelized
             - use parallelization with MPI split communicator (COMM_model) from the icesee_mpi_parallelization
@@ -180,7 +220,7 @@ class EnsembleKalmanFilter:
             print(f"\nranks: {rank}, size: {size}\n")
 
             for ens in range(ensemble.shape[1]):
-                ensemble[:, ens] = forecast_step_single(ensemble=ensemble[:, ens], **model_kwargs)
+                ensemble[:, ens] = forecast_step_single(ensemble=ensemble[:, ens], **icesee_kwargs)
 
             gathered_ensemble = self.parallel_manager.all_gather_data(comm, ensemble)
             #  initalize the ensemble to be returned
@@ -189,7 +229,7 @@ class EnsembleKalmanFilter:
             if rank == 0:
                 ensemble_bcast = np.hstack(gathered_ensemble)
             # else:
-                # ensemble = None # return None for other ranks since 
+                # ensemble = None # return None for other ranks since
             self.parallel_manager.broadcast_data(comm, ensemble_bcast, root=0)
             # ensemble = comm.bcast(ensemble, root=0)
             return ensemble_bcast
@@ -212,10 +252,10 @@ class EnsembleKalmanFilter:
             #     return ensemble
             # else:
                 # return None
-            
+
 
         # Parallel forecast step using Multiprocessing
-        elif re.match(r"\AMultiprocessing\Z", self.parallel_flag, re.IGNORECASE):
+        elif re.match(r"\AMultiprocessing\Z", self.analysis_backend, re.IGNORECASE):
             """
             Run the forecast_step_single function Nens times simultaneously using multiprocessing.
             """
@@ -228,13 +268,13 @@ class EnsembleKalmanFilter:
             # print(f"[DEBUG] EnKF Mean Before Update: {np.mean(ensemble, axis=1)}")
 
             # Prepare worker arguments (avoid copying full ensemble, just one member per worker)
-            worker_args = [(ens_idx, ensemble, nd, Q_err, self.parameters, model_kwargs) for ens_idx in range(Nens)]
+            worker_args = [(ens_idx, ensemble, nd, Q_err, self.parameters, icesee_kwargs) for ens_idx in range(Nens)]
 
             # Run forecast_step_single in parallel
             # if __name__ == '__main__':
                 # restrict the number of workers to the number of ensemble members
 
-            
+
             nworkers = min(mp.cpu_count(), Nens)
 
             with Pool(nworkers) as pool:
@@ -257,14 +297,14 @@ class EnsembleKalmanFilter:
                     raise ValueError("Multiprocessing returned an empty ensemble!")
 
                 # Transpose for expected shape
-                ensemble = results_array.T  
+                ensemble = results_array.T
             # print("After", ensemble[:10,1])
             # print(f"[DEBUG] EnKF Mean After Update: {np.mean(ensemble, axis=1)}")
             return ensemble
 
 
         # Parallel forecast step using Dask
-        elif re.match(r"\ADask\Z", self.parallel_flag, re.IGNORECASE):
+        elif re.match(r"\ADask\Z", self.analysis_backend, re.IGNORECASE):
             import dask
             import dask.array as da
             from dask import compute, delayed
@@ -274,7 +314,7 @@ class EnsembleKalmanFilter:
 
             # Create delayed tasks for each ensemble member
             tasks = [
-                    delayed(forecast_step_single)(ensemble[:, ens], **model_kwargs)
+                    delayed(forecast_step_single)(ensemble[:, ens], **icesee_kwargs)
                     for ens in range(Nens)
                 ]
 
@@ -287,7 +327,7 @@ class EnsembleKalmanFilter:
             return ensemble
 
         # Parallel forecast step using Ray
-        elif re.match(r"\ARay\Z", self.parallel_flag, re.IGNORECASE):
+        elif re.match(r"\ARay\Z", self.analysis_backend, re.IGNORECASE):
             import ray
 
             nd, Nens = ensemble.shape
@@ -297,12 +337,12 @@ class EnsembleKalmanFilter:
                 ray.init(ignore_reinit_error=True)
 
             @ray.remote
-            def ray_worker(ensemble_member, nd, Q_err, parameters, model_kwargs):
+            def ray_worker(ensemble_member, nd, Q_err, parameters, icesee_kwargs):
                 """
                 Remote function to perform forecast step for a single ensemble member.
                 This function will be executed in parallel by Ray workers.
                 """
-                return forecast_step_single(ensemble_member, **model_kwargs)
+                return forecast_step_single(ensemble_member, **icesee_kwargs)
 
             # Launch tasks in parallel using Ray
             futures = [
@@ -317,9 +357,9 @@ class EnsembleKalmanFilter:
             ensemble = np.array(results).T
             return ensemble
 
-        
+
         # python openmp parallelization
-        elif re.match(r"\APyomp\Z", self.parallel_flag, re.IGNORECASE):
+        elif re.match(r"\APyomp\Z", self.analysis_backend, re.IGNORECASE):
             # check if the Pyomp module is installed
             try:
                 # check python version: it should be [3.9 - 3.10]
@@ -334,8 +374,8 @@ class EnsembleKalmanFilter:
                     #  get the maximum number of cores
                     MaxTHREADS = os.cpu_count()
 
-                    ModelKwargs = namedtuple("ModelKwargs", model_kwargs.keys())
-                    processed_args = ModelKwargs(**model_kwargs)
+                    ModelKwargs = namedtuple("ModelKwargs", icesee_kwargs.keys())
+                    processed_args = ModelKwargs(**icesee_kwargs)
 
                     # create a wrapper for the forecast step function to use @njit
                     @njit
@@ -347,14 +387,14 @@ class EnsembleKalmanFilter:
                                 numThrds = omp_get_num_threads() #get number of threads
                             for ens in range(threadID,Nens,numThrds):
                                 partialEnsembles[:,threadID] = forecast_step_single(ensemble=ensemble[:,ens], **processed_args)
-                                
+
                         return partialEnsembles
 
                     return forecast_wrapper()
-                
+
             except ImportError:
                 raise ImportError("Pyomp module not found. Please install it using 'conda install -c python-for-hpc -c conda-forge pyomp' of see https://github.com/Python-for-HPC/PyOMP for more details.")
-            
+
         else:
             raise ValueError("Invalid parallel flag. Choose from 'serial', 'MPI', 'Dask', 'Ray', 'Multiprocessing'.")
 
@@ -363,20 +403,20 @@ class EnsembleKalmanFilter:
         """Compute the Kalman gain based on the Jacobian of the observation function."""
         # compute the mean of the forecast ensemble
         # ensemble_forecast_mean = np.mean(ensemble, axis=1)
-    
+
         Jobs = self.Obs_Jacobian(self.Cov_model.shape[0])
         inv_matrix = np.linalg.inv(Jobs @ self.Cov_model @ Jobs.T + self.Cov_obs)
         KalGain = self.Cov_model @ Jobs.T @ inv_matrix
         return KalGain
-    
+
     # Analysis steps
     def EnKF_Analysis(self, ensemble):
         """
         Stochastic Ensemble Kalman Filter (EnKF) analysis step.
-        
+
         Parameters:
             ensemble: ndarray - Ensemble matrix (n x N).
-        
+
         Returns:
             ensemble_analysis: updated ensemble matrix (n x N).
             analysis_error_cov: ndarray - Analysis error covariance matrix (n x n).
@@ -385,7 +425,7 @@ class EnsembleKalmanFilter:
         KalGain = self._compute_kalman_gain()
 
         n,Nens = ensemble.shape
-        m   =self.Observation_vec.shape[0] 
+        m   =self.Observation_vec.shape[0]
 
         # compute virtual observations and ensemble analysis
         virtual_observations  = np.zeros((m,Nens))
@@ -406,14 +446,14 @@ class EnsembleKalmanFilter:
 
         # return ensemble_analysis, analysis_error_cov
         return ensemble_analysis
-       
+
     def DEnKF_Analysis(self, ensemble):
         """
         Deterministic Ensemble Kalman Filter (DEnKF) analysis step.
-        
+
         Parameters:
             ensemble: ndarray - Ensemble matrix (n x N).
-        
+
         Returns:
             ensemble_analysis: updated ensemble matrix (n x N).
             analysis_error_cov: ndarray - Analysis error covariance matrix (n x n).
@@ -422,7 +462,7 @@ class EnsembleKalmanFilter:
         KalGain = self._compute_kalman_gain()
 
         n,N = ensemble.shape
-        m   = self.Observation_vec.shape[0] 
+        m   = self.Observation_vec.shape[0]
 
         # compute ensemble mean
         ensemble_forecast_mean = np.mean(ensemble, axis=1)
@@ -450,10 +490,10 @@ class EnsembleKalmanFilter:
     def EnRSKF_Analysis(self, ensemble):
         """
         Deterministic Ensemble Square Root Filter (EnSRF) analysis step.
-        
+
         Parameters:
             ensemble: ndarray - Ensemble matrix (n x N).
-        
+
         Returns:
             ensemble_analysis: updated ensemble matrix (n x N).
             analysis_error_cov: ndarray - Analysis error covariance matrix (n x n).
@@ -479,19 +519,19 @@ class EnsembleKalmanFilter:
         # analysis_error_cov = ensemble_analysis + self.Cov_model@(U@np.diag(np.sqrt(S))@U.T)
 
         return ensemble_analysis
-    
+
     def EnTKF_Analysis(self, ensemble):
         """
         Ensemble Transform Kalman Filter (EnTKF) analysis step.
-        
+
         Parameters:
             ensemble: ndarray - Ensemble matrix (n x N).
-        
+
         Returns:
             ensemble_analysis: updated ensemble matrix (n x N).
             analysis_error_cov: ndarray - Analysis error covariance matrix (n x n).
         """
-        
+
         # compute the mean of the forecast ensemble
         ensemble_forecast_mean = np.mean(ensemble, axis=1)
 
@@ -519,8 +559,8 @@ class EnsembleKalmanFilter:
 
         # return ensemble_analysis, analysis_error_cov
         return ensemble_analysis
-    
-    
+
+
 # if __name__ == '__main__':
 #     enkf = EnsembleKalmanFilter()
 #     enkf.forecast_step()
