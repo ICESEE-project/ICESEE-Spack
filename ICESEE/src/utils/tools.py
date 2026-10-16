@@ -16,6 +16,7 @@ import logging
 import traceback
 from mpi4py import MPI
 import json, glob, tempfile, hashlib
+from pathlib import Path
 
 CKPT_DIRNAME = "_checkpoints"
 CKPT_BASENAME = "icesee_ckpt.json"
@@ -28,7 +29,11 @@ def _extract_time(fname: str) -> int:
     return int(m.group(1))
 
 def _list_sorted_files(input_dir: str):
-    files = glob.glob(os.path.join(input_dir, "icesee_enkf_ens_*.h5"))
+    files = [
+        path
+        for path in glob.glob(os.path.join(input_dir, "icesee_enkf_ens_*.h5"))
+        if re.search(FNAME_PATTERN, os.path.basename(path))
+    ]
     if not files:
         raise RuntimeError(f"No input files found in {input_dir}")
     files.sort(key=_extract_time)
@@ -53,7 +58,8 @@ def h5py_has_mpi():
 def build_vds(input_dir: str,
               dset_name: str | None = None,
               out_file: str | None = None,
-              fillvalue=np.nan) -> str:
+              fillvalue=np.nan,
+              row_chunk_size: int = 16384) -> str:
     files = _list_sorted_files(input_dir)
     if dset_name is None:
         dset_name = _infer_dataset_name(files[0], prefer="states")
@@ -70,13 +76,16 @@ def build_vds(input_dir: str,
     # Build VDS layout
     layout = h5py.VirtualLayout(shape=(nd, nens, nt), dtype=dtype)
     for t, f in enumerate(files):
-        vsrc = h5py.VirtualSource(f, dset_name, shape=(nd, nens))
+        # Absolute source names keep the VDS valid when opened elsewhere.
+        vsrc = h5py.VirtualSource(os.path.abspath(f), dset_name, shape=(nd, nens))
         layout[:, :, t] = vsrc
 
     os.makedirs(os.path.dirname(out_file) or ".", exist_ok=True)
     with h5py.File(out_file, "w", libver="latest") as fout:
         # dset_name='ensemble'
-        fout.create_virtual_dataset(dset_name, layout, fillvalue=fillvalue)
+        states = fout.create_virtual_dataset(dset_name, layout, fillvalue=fillvalue)
+        if dset_name != "ensemble":
+            fout["ensemble"] = states
         fout.attrs.update({
             "nd": nd, "nens": nens, "nt": nt,
             "stack_type": "VDS",
@@ -86,11 +95,13 @@ def build_vds(input_dir: str,
         # Compute ensemble mean (iterate time slices lazily)
         mean_dset = fout.create_dataset(
             "ensemble_mean", shape=(nd, nt), dtype=np.float64,
-            chunks=(nd, 1), fillvalue=np.nan
+            chunks=(min(nd, max(1, int(row_chunk_size))), 1), fillvalue=np.nan
         )
         for t in range(nt):
-            arr = fout[dset_name][:, :, t]
-            mean_dset[:, t] = np.nanmean(arr, axis=1)
+            for row0 in range(0, nd, max(1, int(row_chunk_size))):
+                row1 = min(nd, row0 + max(1, int(row_chunk_size)))
+                arr = fout[dset_name][row0:row1, :, t]
+                mean_dset[row0:row1, t] = np.nanmean(arr, axis=1)
 
     return out_file
 
@@ -101,7 +112,8 @@ def consolidate_h5(input_dir: str,
                    compression: str = "gzip",
                    compression_opts: int = 4,
                    chunks: tuple[int,int,int] | None = None,
-                   allow_missing: bool = False) -> str:
+                   allow_missing: bool = False,
+                   row_chunk_size: int = 16384) -> str:
     files = _list_sorted_files(input_dir)
     if dset_name is None:
         dset_name = _infer_dataset_name(files[0], prefer="states")
@@ -116,7 +128,7 @@ def consolidate_h5(input_dir: str,
     nt = len(files)
     if chunks is None:
         # Good default for time-wise appends and time-slice reads
-        chunks = (nd, nens, 1)
+        chunks = (min(nd, max(1, int(row_chunk_size))), nens, 1)
 
     os.makedirs(os.path.dirname(out_file) or ".", exist_ok=True)
     with h5py.File(out_file, "w") as fout:
@@ -135,7 +147,7 @@ def consolidate_h5(input_dir: str,
         )
         mean_dset = fout.create_dataset(
             "ensemble_mean", shape=(nd, nt), dtype=np.float64,
-            chunks=(nd, 1), compression=compression,
+            chunks=(min(nd, max(1, int(row_chunk_size))), 1), compression=compression,
             compression_opts=compression_opts,
             shuffle=True, fletcher32=True
         )
@@ -146,22 +158,26 @@ def consolidate_h5(input_dir: str,
             "dataset_name": dset_name
         })
 
-        # Copy time slices, one file at a time (low memory)
+        # Copy row chunks, never a complete state x ensemble slice.
         for t, fpath in enumerate(files):
             try:
                 with h5py.File(fpath, "r") as fi:
-                    arr = fi[dset_name][...]
+                    source = fi[dset_name]
+                    if source.shape != (nd, nens):
+                        raise ValueError(
+                            f"Shape mismatch at {fpath}: {source.shape} != {(nd, nens)}"
+                        )
+                    for row0 in range(0, nd, max(1, int(row_chunk_size))):
+                        row1 = min(nd, row0 + max(1, int(row_chunk_size)))
+                        arr = source[row0:row1, :]
+                        dset[row0:row1, :, t] = arr
+                        mean_dset[row0:row1, t] = np.nanmean(arr, axis=1)
             except Exception as e:
                 if allow_missing:
-                    arr = np.full((nd, nens), np.nan, dtype=dtype)
+                    dset[:, :, t] = np.nan
+                    mean_dset[:, t] = np.nan
                 else:
                     raise RuntimeError(f"Failed reading {fpath}: {e}") from e
-
-            if arr.shape != (nd, nens):
-                raise ValueError(f"Shape mismatch at {fpath}: {arr.shape} != {(nd, nens)}")
-
-            dset[:, :, t] = arr
-            mean_dset[:, t] = np.nanmean(arr, axis=1)  # (nd,) → store column
 
     return out_file
 
@@ -169,15 +185,15 @@ def consolidate_h5(input_dir: str,
 def finalize_stack(output_dir: str,
                    mode: str = "vds",
                    dset_name: str | None = "states",
-                   **kwargs) -> str:
+                   **builder_options) -> str:
     """
     mode: 'vds' (no copy) or 'h5' (materialized).
-    kwargs are passed to the underlying builder (e.g., allow_missing=True).
+    builder_options are passed to the underlying builder (e.g., allow_missing=True).
     """
     if mode.lower() == "vds":
-        return build_vds(output_dir, dset_name=dset_name, **kwargs)
+        return build_vds(output_dir, dset_name=dset_name, **builder_options)
     elif mode.lower() in ("h5", "materialized"):
-        return consolidate_h5(output_dir, dset_name=dset_name, **kwargs)
+        return consolidate_h5(output_dir, dset_name=dset_name, **builder_options)
     else:
         raise ValueError("mode must be 'vds' or 'h5'")
 
@@ -203,12 +219,12 @@ def install_requirements(force_install=False, verbose=False):
     if os.path.exists(".installed") and not force_install:
         print("[ICESEE] Dependencies are already installed. Skipping installation.")
         return
-    
+
     try:
         # Run the command to install the requirements from requirements.txt
         print("[ICESEE] Installing dependencies from requirements.txt...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "../requirements.txt"])
-        
+
         # Create a `.installed` marker file to indicate successful installation
         with open(".installed", "w") as f:
             f.write("Dependencies installed successfully.\n")
@@ -220,32 +236,41 @@ def install_requirements(force_install=False, verbose=False):
         raise RuntimeError("Failed to install dependencies from requirements.txt. Please check the file and try again.")
 
 # ==== saves arrays to h5 file
-def save_arrays_to_h5(filter_type=None, model=None, parallel_flag=None, commandlinerun=None, **datasets):
+def save_arrays_to_h5(
+    filter_type=None,
+    model=None,
+    execution_mode=0,
+    commandlinerun=None,
+    data_path=None,
+    **datasets,
+):
     """
     Save multiple arrays to an HDF5 file, optionally in a parallel environment (MPI).
 
     Parameters:
         filter_type (str): Type of filter used (e.g., 'ENEnKF', 'DEnKF').
         model (str): Name of the model (e.g., 'icepack').
-        parallel_flag (str): Flag to indicate if MPI parallelism is enabled. Default is 'MPI'.
+        execution_mode (int): 0=serial, 1=partial MPI, 2=full MPI.
         commandlinerun (bool): Indicates if the function is triggered by a command-line run. Default is False.
+        data_path (str or os.PathLike): Run-output directory. Defaults to
+            ``_modelrun_datasets``.
         **datasets (dict): Keyword arguments where keys are dataset names and values are arrays to save.
 
     Returns:
         dict: The datasets if not running in parallel, else None.
     """
-    output_dir = "results"
-    output_file = f"{output_dir}/{filter_type}-{model}.h5"
+    output_dir = Path(data_path or "_modelrun_datasets")
+    output_file = output_dir / f"{filter_type}-{model}.h5"
 
-    if parallel_flag == "MPI" or commandlinerun:
-        # Create the results folder if it doesn't exist
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-            print("[ICESEE] Creating results folder")
+    if int(execution_mode) in (1, 2) or commandlinerun:
+        # Create the configured run-output folder if it does not exist.
+        if not output_dir.exists():
+            output_dir.mkdir(parents=True, exist_ok=True)
+            print(f"[ICESEE] Creating run-output folder {output_dir}")
 
         # Remove the existing file, if any
-        if os.path.exists(output_file):
-            os.remove(output_file)
+        if output_file.exists():
+            output_file.unlink()
             print(f"[ICESEE] Existing file {output_file} removed.")
 
         print(f"[ICESEE] Writing data to {output_file}")
@@ -294,15 +319,19 @@ def extract_datasets_from_h5(file_path):
     return datasets
 
 # --- best for saving all data to h5 file in parallel environment
-def save_all_data(enkf_params=None, nofilter=None, **kwargs):
+def save_all_data(icesee_kwargs, nofilter=None, data_path=None, **datasets):
     """
     General function to save datasets based on the provided parameters.
     """
+    # Keep summary metadata beside the ensemble/state files for this run.
+    data_path = data_path or icesee_kwargs.get("data_path") or "_modelrun_datasets"
+
     # Update filter_type only if nofilter is provided
-    filter_type = "true-wrong" if nofilter else enkf_params["filter_type"]
+    filter_type = "true-wrong" if nofilter else icesee_kwargs["filter_type"]
 
     # --- Local MPI implementation ---
-    if re.match(r"\AMPI\Z", enkf_params["parallel_flag"], re.IGNORECASE) or re.match(r"\AMPI_model\Z", enkf_params["parallel_flag"], re.IGNORECASE):
+    execution_mode = int(icesee_kwargs.get("execution_mode", 0))
+    if execution_mode in (1, 2):
         from mpi4py import MPI
         comm = MPI.COMM_WORLD  # Initialize MPI
         rank = comm.Get_rank()  # Get rank of current MPI process
@@ -312,24 +341,26 @@ def save_all_data(enkf_params=None, nofilter=None, **kwargs):
         if rank == 0:
             save_arrays_to_h5(
                 filter_type=filter_type,  # Use updated or original filter_type
-                model=enkf_params["model_name"],
-                parallel_flag=enkf_params["parallel_flag"],
-                commandlinerun=enkf_params["commandlinerun"],
-                **kwargs
+                model=icesee_kwargs["model_name"],
+                execution_mode=execution_mode,
+                commandlinerun=icesee_kwargs["commandlinerun"],
+                data_path=data_path,
+                **datasets
             )
         else:
             None
     else:
         save_arrays_to_h5(
             filter_type=filter_type,  # Use updated or original filter_type
-            model=enkf_params["model_name"],
-            parallel_flag=enkf_params["parallel_flag"],
-            commandlinerun=enkf_params["commandlinerun"],
-            **kwargs
+            model=icesee_kwargs["model_name"],
+            execution_mode=execution_mode,
+            commandlinerun=icesee_kwargs["commandlinerun"],
+            data_path=data_path,
+            **datasets
         )
 
 # ---- function to get the index of the variables in the vector dynamically
-def icesee_get_index(vec=None, **kwargs):
+def icesee_get_index(vec=None, **icesee_kwargs):
     """
     If var_nd is provided: variables in vec_inputs may have different global sizes.
     In this branch we DO NOT use dim_list, because dim_list is typically packed under
@@ -340,22 +371,21 @@ def icesee_get_index(vec=None, **kwargs):
       - rank-local ownership is contiguous within each variable
     """
     try:
-        var_nd = kwargs.get('var_nd', None)
+        var_nd = icesee_kwargs.get('var_nd', None)
 
         if var_nd is not None:
-            vec_inputs = kwargs.get("vec_inputs", None)
-            params = kwargs.get("params", None)
-            if vec_inputs is None or params is None:
-                raise ValueError("vec_inputs and params must be provided")
+            vec_inputs = icesee_kwargs.get("vec_inputs", None)
+            if vec_inputs is None:
+                raise ValueError("vec_inputs must be provided in icesee_kwargs")
 
             # communicator selection
-            if params["default_run"]:
-                comm = kwargs.get("subcomm", None)
+            if icesee_kwargs["default_run"]:
+                comm = icesee_kwargs.get("subcomm", None)
             else:
-                comm = kwargs.get("comm_world", None)
+                comm = icesee_kwargs.get("comm_world", None)
 
             # rank/size
-            if comm is None or params.get("even_distribution", False):
+            if comm is None or icesee_kwargs.get("even_distribution", False):
                 rank = 0
                 nranks = 1
             else:
@@ -412,19 +442,96 @@ def icesee_get_index(vec=None, **kwargs):
         # Case 2: original equal-size logic (unchanged)
         # ============================
         else:
-            vec_inputs = kwargs.get("vec_inputs", None)
-            nd = kwargs.get("nd")
-            # print(f"[ICESEE-debug] vec_inputs: {vec_inputs}, nd: {nd}, kwargs: {kwargs}\n")
-            if kwargs["default_run"]:
-                comm = kwargs.get("subcomm", None)
+            vec_inputs = icesee_kwargs.get("vec_inputs", None)
+            nd = icesee_kwargs.get("nd")
+            if not vec_inputs:
+                raise ValueError("vec_inputs must be a non-empty sequence")
+            if nd is None:
+                raise ValueError("nd must be provided")
+            # print(f"[ICESEE-debug] vec_inputs: {vec_inputs}, nd: {nd}, icesee_kwargs: {icesee_kwargs}\n")
+            if icesee_kwargs["default_run"]:
+                comm = icesee_kwargs.get("subcomm", None)
             else:
-                comm = kwargs.get("comm_world", None)
-            
-            # len_vec = kwargs["total_state_param_vars"]
+                comm = icesee_kwargs.get("comm_world", None)
+
+            # len_vec = icesee_kwargs["total_state_param_vars"]
             len_vec = len(vec_inputs)
-            dim_list_param = np.array(kwargs.get('dim_list', None)) // len(kwargs.get('vec_inputs_old', None))
+            # ``vec_inputs_old`` is populated when a temporary analysis (for
+            # example an inversion) operates on a reduced variable list.  It
+            # is not required by simpler applications such as Lorenz96, so
+            # fall back to the active layout instead of calling ``len(None)``.
+            layout_inputs = icesee_kwargs.get("vec_inputs_old") or vec_inputs
+            dim_list = icesee_kwargs.get("dim_list")
+            # A replicated-state model (e.g. Lorenz-96) reports the same
+            # full ``nd`` on every rank of a model communicator -- it is
+            # not a per-rank partition, so it must never be indexed by
+            # ``comm.Get_rank()`` or treated as a cumulative-offset series
+            # below (see src/utils/state_ownership.py for the distinction
+            # this mirrors).
+            replicated = str(
+                icesee_kwargs.get("state_distribution", "distributed")
+            ).strip().lower() == "replicated"
+            # How many ranks the *current* indexing context spans -- mirrors
+            # the exact condition used just below to decide whether a
+            # fallback `dim_list` should be a single-element `[nd]` or a
+            # fresh `comm.allgather(nd)`. Used to detect a `dim_list` that
+            # was published by an earlier call scoped to a different
+            # communicator (see the `hdim` comment below).
+            nranks = (
+                1
+                if (comm is None or icesee_kwargs.get("even_distribution", False) or replicated)
+                else comm.Get_size()
+            )
+            if dim_list is None or len(dim_list) == 0:
+                # Simple/default applications can enter initialization before
+                # ``generate_true_wrong_state`` has published ``dim_list``.
+                # Recover the layout from the communicator instead of making
+                # callers depend on that side effect.  A COMM_SELF subcomm
+                # therefore yields [nd], while a spatial model subcomm yields
+                # the per-rank local state dimensions.
+                if comm is None or icesee_kwargs.get("even_distribution", False) or replicated:
+                    dim_list = [int(nd)]
+                else:
+                    dim_list = comm.allgather(int(nd))
+            if nd % len_vec:
+                raise ValueError(
+                    f"nd={nd} is not divisible by len(vec_inputs)={len_vec}"
+                )
+            dim_list_param = np.asarray(dim_list, dtype=int) // len(layout_inputs)
             dim_list_param = dim_list_param[:len_vec]
-            hdim = nd // len_vec
+            # `hdim` is the stride between one variable's global block and the
+            # next in the assumed [var0(all ranks) | var1(all ranks) | ...]
+            # layout that `offsets`/`var_start` below index into -- it must
+            # therefore be that variable's *global* (all-ranks) block size,
+            # not this rank's own local `nd`. For a replicated model or any
+            # single-rank model communicator (every configuration shipped
+            # today except the genuinely spatially distributed
+            # ranks_per_model > 1 case) `dim_list` has exactly one entry
+            # equal to `nd`, so `dim_list_param.sum() == nd // len_vec`
+            # exactly -- this is a no-op there. It only differs once more
+            # than one rank contributes a distributed model's per-variable
+            # data, which previously used this rank's own (possibly
+            # unequal, e.g. an uneven Firedrake mesh partition) local size
+            # as the stride, silently reading each later variable's block
+            # from the wrong offset (and, for multi-rank models, from
+            # another rank's slice of an earlier variable) instead.
+            #
+            # `dim_list` can be a *cached* value published by an earlier,
+            # differently-scoped call (e.g. generate_true_wrong_state
+            # publishes one gathered over comm_world) rather than one
+            # freshly gathered over `comm` here -- trustworthy only when
+            # its length actually matches the current communicator's rank
+            # count (`nranks`, already resolved above from this same
+            # `comm`). When it does not match (a stale/wrong-scope cache --
+            # e.g. Lorenz-96's replicated comm_world-sized cache reused
+            # under a size-1 model-group `comm`), summing it would count
+            # ranks that are not part of *this* indexing context at all;
+            # fall back to the original, always-safe `nd // len_vec` there,
+            # exactly as every model behaved before this rank-aware fix.
+            if len(dim_list) == nranks:
+                hdim = int(dim_list_param.sum())
+            else:
+                hdim = nd // len_vec
             # print(f"[ICESEE-debug] len_vec: {len_vec}, dim_list_param: {dim_list_param}, hdim: {hdim}\n")
 
             if comm is None:
@@ -432,7 +539,9 @@ def icesee_get_index(vec=None, **kwargs):
                 dim = dim_list_param[rank]
                 offsets = [0]
             else:
-                if kwargs["even_distribution"]:
+                if icesee_kwargs["even_distribution"] or replicated:
+                    # Every rank owns an identical full copy: index as if
+                    # this were the only rank, regardless of comm.Get_rank().
                     rank = 0
                     dim = dim_list_param[rank]
                     offsets = [0]
@@ -451,14 +560,13 @@ def icesee_get_index(vec=None, **kwargs):
                 index_map[var] = np.arange(start, end)
                 var_start += hdim
 
-            local_size_per_rank = kwargs.get('dim_list', None)
-            return None, index_map, local_size_per_rank[rank]
+            return None, index_map, int(np.asarray(dim_list, dtype=int)[rank])
     except Exception as e:
         print(f"Error occurred in icesee_get_index: {e}")
         tb_str = "".join(traceback.format_exception(*sys.exc_info()))
         print(f"Traceback details:\n{tb_str}")
         # self.mpi_comm.Abort(1)
-    
+
 # ==============================================================================
 
 # # Refined ANSI color codes
@@ -491,14 +599,14 @@ def icesee_get_index(vec=None, **kwargs):
 #     """Set up a logger for timing output."""
 #     logger = logging.getLogger("ICESEE_Timing")
 #     logger.setLevel(logging.INFO)
-    
+
 #     # Avoid duplicate handlers
 #     if not logger.handlers:
 #         # File handler for logging to a file
 #         file_handler = logging.FileHandler(log_file)
 #         file_handler.setFormatter(logging.Formatter("%(message)s"))
 #         logger.addHandler(file_handler)
-        
+
 #         # Optional: Stream handler for console output (only for root process)
 #         comm = MPI.COMM_WORLD
 #         rank = comm.Get_rank()
@@ -506,14 +614,14 @@ def icesee_get_index(vec=None, **kwargs):
 #             stream_handler = logging.StreamHandler(sys.stderr)  # Use stderr to avoid stdout issues
 #             stream_handler.setFormatter(logging.Formatter("%(message)s"))
 #             logger.addHandler(stream_handler)
-    
+
 #     return logger
 
 # def display_timing(computational_time: float, wallclock_time: float) -> None:
 #     """Display computational and wall-clock times with perfectly aligned formatting using logging."""
 #     # Set up logger
 #     logger = setup_logger()
-    
+
 #     # Only log from the root MPI process
 #     comm = MPI.COMM_WORLD
 #     rank = comm.Get_rank()
@@ -523,33 +631,33 @@ def icesee_get_index(vec=None, **kwargs):
 #     # Formatted time strings
 #     comp_time_str = format_time(computational_time)
 #     wall_time_str = format_time(wallclock_time)
-    
+
 #     # Content lines (no trailing spaces after emojis)
 #     title = "[ICESEE] Performance Metrics"
 #     comp_line = f"Computational Time (Σ): {comp_time_str} (DAY:HR:MIN:SEC.ms) ⏱️"
 #     wall_line = f"Wall-Clock Time (max):  {wall_time_str} (DAY:HR:MIN:SEC.ms) 🕒"
-    
+
 #     # Calculate max width based on plain text length (excluding ANSI codes)
 #     max_content_width = max(len(title), len(comp_line), len(wall_line))
 #     box_width = max_content_width + 12  # 2 for '║' on each side + 2 for padding
-    
+
 #     # Box drawing
 #     header = f"{COLORS['GRAY']}╔{'═' * box_width}╗{COLORS['RESET']}"
 #     footer = f"{COLORS['GRAY']}╚{'═' * box_width}╝{COLORS['RESET']}"
-    
+
 #     # Pad lines to exact width, ensuring no extra spaces
 #     def pad_line(text: str) -> str:
 #         padding = " " * (max_content_width - len(text) + 6 + 4)
 #         return f"{COLORS['GRAY']}║ {text}{padding} ║{COLORS['RESET']}"
-    
+
 #     def pad_line_comp(text: str) -> str:
 #         padding = " " * (max_content_width - len(text) + 7 + 4)
 #         return f"{COLORS['GRAY']}║ {text}{padding} ║{COLORS['RESET']}"
-    
+
 #     def pad_line_wall(text: str) -> str:
 #         padding = " " * (max_content_width - len(text) + 5 + 4)
 #         return f"{COLORS['GRAY']}║ {text}{padding} ║{COLORS['RESET']}"
-    
+
 #     # Log with strict alignment
 #     logger.info(f"\n{header}")
 #     logger.info(f"{COLORS['CYAN']}{pad_line(title)}{COLORS['RESET']}")
@@ -573,34 +681,41 @@ def format_time(seconds: float) -> str:
     millis = int((seconds % 1) * 1000)
     return f"{days:02d}:{hours:02d}:{minutes:02d}:{secs:02d}.{millis:03d}"
 
-def setup_logger(log_file: str = "icesee_timing.log"):
+def setup_logger(log_file: str = None):
     """Set up a logger for timing output."""
     import logging
     import sys
     from mpi4py import MPI
-    
+
+    if log_file is None:
+        diagnostics_dir = Path(
+            os.environ.get("ICESEE_RESULTS_DIR", "_modelrun_datasets")
+        ) / "diagnostics"
+        diagnostics_dir.mkdir(parents=True, exist_ok=True)
+        log_file = diagnostics_dir / "icesee_timing.log"
+
     logger = logging.getLogger("ICESEE_Timing")
     logger.setLevel(logging.INFO)
-    
+
     if not logger.handlers:
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(logging.Formatter("%(message)s"))
         logger.addHandler(file_handler)
-        
+
         comm = MPI.COMM_WORLD
         rank = comm.Get_rank()
         if rank == 0:
             stream_handler = logging.StreamHandler(sys.stderr)
             stream_handler.setFormatter(logging.Formatter("%(message)s"))
             logger.addHandler(stream_handler)
-    
+
     return logger
 
 def display_timing_default(computational_time: float, wallclock_time: float) -> None:
     """Display computational and wall-clock times with perfectly aligned formatting using logging."""
     # Set up logger
     logger = setup_logger()
-    
+
     # Only log from the root MPI process
     # comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
@@ -610,22 +725,22 @@ def display_timing_default(computational_time: float, wallclock_time: float) -> 
     # Formatted time strings
     comp_time_str = format_time(computational_time)
     wall_time_str = format_time(wallclock_time)
-    
+
     # Content lines (no trailing spaces after emojis)
     # title = "[ICESEE] Performance Metrics"
     title = f"[ICESEE] Metrics on {MPI.COMM_WORLD.Get_size()} ranks"
     comp_line = f"Computational Time (Σ): {comp_time_str} (DAY:HR:MIN:SEC.ms) ⏱️"
     wall_line = f"Wall-Clock Time (max):  {wall_time_str} (DAY:HR:MIN:SEC.ms) 🕒"
-    
+
     # Calculate max width based on the longest metric label and value
     max_label_width = max(len(entry[0]) for entry in time_entries)
     max_value_width = max(len(entry[1]) for entry in time_entries[1:])  # Skip header for value width
     total_width = max_label_width + max_value_width - 14  # 2 for '║' + 2 for padding
-    
+
     # Box drawing
     header = f"{COLORS['GRAY']}╔{'═' * total_width}╗{COLORS['RESET']}"
     footer = f"{COLORS['GRAY']}╚{'═' * total_width}╝{COLORS['RESET']}"
-    
+
     # Pad lines to exact width with strict alignment
     def pad_line(label: str, value: str = "") -> str:
         if not value:  # Header
@@ -635,7 +750,7 @@ def display_timing_default(computational_time: float, wallclock_time: float) -> 
             label_padding = " " * (max_label_width -17 - len(label))  # +1 for space
             value_padding = " " * (max_value_width -17 - len(value))  # +1 for space
             return f"{COLORS['GRAY']}║ {label}{label_padding}{value}{value_padding}{COLORS['RESET']}{COLORS['GRAY']}  ║{COLORS['RESET']}"
-    
+
     # Log with strict alignment
     logger.info(f"{header}")
     for entry in time_entries:
@@ -661,27 +776,34 @@ def format_time(seconds: float) -> str:
     millis = int((seconds % 1) * 1000)
     return f"{days:02d}:{hours:02d}:{minutes:02d}:{secs:02d}.{millis:03d}"
 
-def setup_logger(log_file: str = "icesee_timing.log"):
+def setup_logger(log_file: str = None):
     """Set up a logger for timing output."""
     import logging
     import sys
     from mpi4py import MPI
-    
+
+    if log_file is None:
+        diagnostics_dir = Path(
+            os.environ.get("ICESEE_RESULTS_DIR", "_modelrun_datasets")
+        ) / "diagnostics"
+        diagnostics_dir.mkdir(parents=True, exist_ok=True)
+        log_file = diagnostics_dir / "icesee_timing.log"
+
     logger = logging.getLogger("ICESEE_Timing")
     logger.setLevel(logging.INFO)
-    
+
     if not logger.handlers:
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(logging.Formatter("%(message)s"))
         logger.addHandler(file_handler)
-        
+
         comm = MPI.COMM_WORLD
         rank = comm.Get_rank()
         if rank == 0:
             stream_handler = logging.StreamHandler(sys.stderr)
             stream_handler.setFormatter(logging.Formatter("%(message)s"))
             logger.addHandler(stream_handler)
-    
+
     return logger
 
 def display_timing_verbose(
@@ -705,10 +827,10 @@ def display_timing_verbose(
 ) -> None:
     """Display all timing metrics in a table with strict aligned formatting using logging, all in gray."""
     # from mpi4py import MPI
-    
+
     # Set up logger
     logger = setup_logger()
-    
+
     # Only log from the root MPI process
     # comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
@@ -734,16 +856,16 @@ def display_timing_verbose(
         ("Forecast Ensemble Mean Computation", format_time(time_forecast_ensemble_mean_computation)),
         ("Analysis Ensemble Mean Computation", format_time(time_analysis_ensemble_mean_computation)),
     ]
-    
+
     # Calculate max width based on the longest metric label and value
     max_label_width = max(len(entry[0]) for entry in time_entries)
     max_value_width = max(len(entry[1]) for entry in time_entries[1:])  # Skip header for value width
     total_width = max_label_width + max_value_width - 14  # 2 for '║' + 2 for padding
-    
+
     # Box drawing
     header = f"{COLORS['GRAY']}╔{'═' * total_width}╗{COLORS['RESET']}"
     footer = f"{COLORS['GRAY']}╚{'═' * total_width}╝{COLORS['RESET']}"
-    
+
     # Pad lines to exact width with strict alignment
     def pad_line(label: str, value: str = "") -> str:
         if not value:  # Header
@@ -753,7 +875,7 @@ def display_timing_verbose(
             label_padding = " " * (max_label_width -17 - len(label))  # +1 for space
             value_padding = " " * (max_value_width -17 - len(value))  # +1 for space
             return f"{COLORS['GRAY']}║ {label}{label_padding}{value}{value_padding}{COLORS['RESET']}{COLORS['GRAY']}  ║{COLORS['RESET']}"
-    
+
     # Log with strict alignment
     logger.info(f"{header}")
     for entry in time_entries:
@@ -766,24 +888,24 @@ def display_timing_verbose(
 def get_grid_dimensions(nx, ny, ndim):
     """
     Calculate grid dimensions mx and my based on physical dimensions and total points.
-    
+
     Parameters:
     nx (int): Number of elements in x-direction
     ny (int): Number of elements in y-direction
     ndim (int): Total number of grid points (mx * my)
-    
+
     Returns:
     tuple: (mx, my) - number of grid points in x and y directions
     """
     # Calculate aspect ratio from physical dimensions
     alpha = nx / ny
-    
+
     # Initial estimate based on aspect ratio and ndim
     # mx/my = alpha and mx*my = ndim
     # mx = sqrt(ndim * alpha), my = sqrt(ndim / alpha)
     mx = np.sqrt(ndim * alpha)
     my = np.sqrt(ndim / alpha)
-    
+
     # Initial rounding
     if mx - int(mx) > 0.5:
         mx = int(np.ceil(mx))
@@ -793,7 +915,7 @@ def get_grid_dimensions(nx, ny, ndim):
         mx = int(np.floor(mx))
     else:
         mx, my = int(mx), int(my)
-    
+
     # Quick adjustment to reach ndim
     current_product = mx * my
     if current_product != ndim:
@@ -801,7 +923,7 @@ def get_grid_dimensions(nx, ny, ndim):
         scale = np.sqrt(ndim / current_product)
         mx = int(round(mx * scale))
         my = int(round(my * scale))
-        
+
         # Fast fine-tuning with minimal iterations
         product = mx * my
         if product < ndim:
@@ -818,7 +940,7 @@ def get_grid_dimensions(nx, ny, ndim):
                 else:
                     my -= 1
                 product = mx * my
-    
+
     return mx, my
 
 def midpoint_rect(mx, my):
@@ -948,8 +1070,8 @@ if __name__ == "__main__":
     )
     print(f"[Finalize] Stacked dataset written: {out}")
 
-def icesee_fingerprint(params: dict, keys=("model_name","nd","nt","Nens","base_seed")) -> str:
-    sub = {k: params.get(k) for k in keys}
+def icesee_fingerprint(icesee_kwargs: dict, keys=("model_name","nd","nt","Nens","base_seed")) -> str:
+    sub = {k: icesee_kwargs.get(k) for k in keys}
     blob = json.dumps(sub, sort_keys=True, separators=(",",":"))
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()
 
@@ -1046,11 +1168,64 @@ def load_bed_masks_from_h5(f):
     return bed_mask_map_static, bed_mask_map_cols, bed_snap_cols, obs_model_to_col
 
 
+def load_hu_obs_from_h5(f):
+    """
+    Load the dense synthetic-observation matrix (state_dim x m_obs) from an
+    open ``synthetic_obs.h5`` handle, transparently supporting both storage
+    layouts written by ICESEE:
+      - dense: a full ``hu_obs`` dataset (execution modes 0/1 always write
+        this; mode 2 only writes it when ``synthetic_observation_storage``
+        is set to ``'dense'`` or ``'both'``).
+      - compact (mode 2's default ``synthetic_observation_storage:
+        'compact'``, used to keep per-rank memory bounded for very large
+        state dimensions): ``hu_obs_compact`` + ``obs_indices`` sparse rows,
+        scattered here into a zero-filled dense array of shape
+        ``(state_dimension, m_obs)`` (unobserved entries stay 0.0, matching
+        ICESEE's own dense-export fallback in
+        ``src/parallelization/EnKF_parallel_io.py``).
 
-def icesee_savefig(fig, name="results.png", dpi=300, show=True):
+    Parameters:
+        f (h5py.File or h5py.Group): an already-open handle on
+            ``synthetic_obs.h5``.
+
+    Returns:
+        np.ndarray: dense observation matrix of shape (nd, m_obs).
+    """
+    if "hu_obs" in f:
+        return f["hu_obs"][:]
+
+    if "hu_obs_compact" not in f or "obs_indices" not in f:
+        raise KeyError(
+            "synthetic_obs.h5 contains neither a dense 'hu_obs' dataset nor "
+            "the compact 'hu_obs_compact'/'obs_indices' datasets needed to "
+            "reconstruct it."
+        )
+
+    compact = f["hu_obs_compact"][:]
+    obs_indices = np.asarray(f["obs_indices"][:], dtype=np.int64)
+    m_obs = compact.shape[1]
+    nd = int(f.attrs.get(
+        "state_dimension",
+        (int(obs_indices.max()) + 1) if obs_indices.size else 0,
+    ))
+
+    dense = np.zeros((nd, m_obs), dtype=np.float64)
+    dense[obs_indices, :] = compact
+    return dense
+
+
+def icesee_savefig(
+    fig,
+    name="results.png",
+    dpi=300,
+    show=True,
+    data_path=None,
+    subdir="figures",
+):
     """
     ICESEE-OnLINE helper:
-    Always save plots into ./figures/ so the GUI can display them.
+    Save plots beneath the configured run-output directory so data and
+    diagnostics remain self-contained.
 
     Parameters
     ----------
@@ -1062,15 +1237,21 @@ def icesee_savefig(fig, name="results.png", dpi=300, show=True):
         Resolution.
     show : bool
         Whether to call plt.show() after saving.
+    data_path : str or pathlib.Path, optional
+        Run-output directory. If omitted, ``ICESEE_RESULTS_DIR`` is used when
+        set, otherwise ``_modelrun_datasets``.
+    subdir : str
+        Figure subdirectory within ``data_path``.
     """
 
     from pathlib import Path
     import matplotlib.pyplot as plt
-    # Ensure figures folder exists
-    Path("figures").mkdir(exist_ok=True)
+    run_dir = Path(data_path or os.environ.get("ICESEE_RESULTS_DIR", "_modelrun_datasets"))
+    out_dir = run_dir / subdir
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     # Full output path
-    out_path = Path("figures") / name
+    out_path = out_dir / name
 
     # Save figure
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
