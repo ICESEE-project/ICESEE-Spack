@@ -21,14 +21,11 @@ CUSTOM_REPO_REL="${ROOT}/icesee-spack"
 CUSTOM_REPO="$(cd "${CUSTOM_REPO_REL}" && pwd)"   # ABSOLUTE path (fixes ./icesee-spack issues)
 
 ICESEE_SUBMODULE="${ROOT}/ICESEE"
-#if [[ -n "${SLURM_CPUS_PER_TASK:-}" ]]; then
-#  JOBS="${JOBS:-$SLURM_CPUS_PER_TASK}"
-#elif [[ -n "${SLURM_JOB_CPUS_PER_NODE:-}" ]]; then
-#  JOBS="${JOBS:-$(echo "$SLURM_JOB_CPUS_PER_NODE" | cut -d'(' -f1)}"
-#else
-#  JOBS="${JOBS:-$(nproc)}"
-#fi
-JOBS=24
+JOBS="${JOBS:-$(
+  { [[ "${SLURM_CPUS_PER_TASK:-}" =~ ^[1-9] ]] && echo "$SLURM_CPUS_PER_TASK"; } ||
+  { [[ -n "${SLURM_JOB_CPUS_PER_NODE:-}" ]] && echo "$SLURM_JOB_CPUS_PER_NODE" | grep -oE '[1-9][0-9]*' | head -1; } ||
+  nproc 2>/dev/null || grep -c '^processor' /proc/cpuinfo 2>/dev/null || echo 1
+)}"
 
 SETUPTOOLS_CONSTRAINT="${SETUPTOOLS_CONSTRAINT:-setuptools<81}"
 NUMPY_CONSTRAINT="${NUMPY_CONSTRAINT:-numpy<2}"

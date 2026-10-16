@@ -9,13 +9,48 @@ Firedrake, and Icepack integration - Clean separation between
 Spack-managed and pip-only Python dependencies
 
 ---
+# Choosing a Version
+ICESEE-Spack currently supports two Icepack/Firedrake installation tracks.
+## Stable Legacy Version — Recommended
+Use this version for current ICESEE Icepack examples, especially codes that still use `icepack.interpolate(...)`.
+```bash
+git clone https://github.com/ICESEE-project/ICESEE-Spack.git
+cd ICESEE-Spack
+git checkout v0.1.0-icepack-legacy
+./scripts/install.sh --with-issm --with-icepack
+```
+This stack uses:
+
+* Firedrake 2025.4.2
+* PETSc 3.23.4
+* petsc4py 3.23.4
+* Icepack compatible with the existing interpolation workflow
+
+Modern Version — Experimental
+
+Use this version only if you want the newer Firedrake/Icepack stack and are prepared to update interpolation calls.
+
+```bash
+git clone https://github.com/ICESEE-project/ICESEE-Spack.git
+cd ICESEE-Spack
+git checkout v0.2.0-icepack-modern
+./scripts/install.sh --with-issm --with-icepack
+```
+This stack uses:
+
+* Firedrake 2025.10.2
+* PETSc 3.24.0
+* petsc4py 3.24.0
+
+The modern stack may require replacing direct icepack.interpolate(...) calls with a compatibility wrapper.
 
 # Quick Start (Recommended)
-
-``` bash
-git clone https://github.com/ICESEE-project/ICESEE-Spack.git && cd ICESEE-Spack && ./scripts/install.sh --with-issm --with-icepack
+```bash
+git clone https://github.com/ICESEE-project/ICESEE-Spack.git
+cd ICESEE-Spack
+git checkout v0.1.0-icepack-legacy
+./scripts/install.sh --with-issm --with-icepack
 ```
-
 After installation, activate the environment:
 
 ``` bash
