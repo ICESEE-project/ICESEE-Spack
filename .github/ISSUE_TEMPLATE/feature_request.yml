@@ -1,0 +1,23 @@
+name: Feature or workflow improvement
+description: Propose a focused installation, subtree or documentation improvement.
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Who encounters it, and in which workflow?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the desired result and alternatives considered.
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Compatibility and validation
+      description: Affected repositories/dependencies, scientific or runtime implications, and how the change could be checked.
