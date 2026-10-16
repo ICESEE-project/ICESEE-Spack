@@ -63,7 +63,7 @@ source scripts/activate.sh
 
 ## Default Install
 
-Installs: - ICESEE (from pinned submodule) - Python (via Spack) - PETSc
+Installs: - ICESEE (from the tracked `ICESEE/` subtree) - Python (via Spack) - PETSc
 (Spack-managed) - MPI-enabled HDF5 + h5py - OpenMPI (auto-built) - pip-only Python dependencies from ICESEE/pyproject.toml
 
 ``` bash
@@ -143,3 +143,8 @@ If ISSM is installed:
 # Support
 
 For issues or contributions, contact me via: briankyanjo@u.boisestate.edu
+
+## Updating bundled source
+
+`ICESEE/` and `spack/` are tracked source trees, not submodules.
+See [the subtree maintenance guide](docs/subtrees.md) for updates and exports.

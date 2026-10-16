@@ -57,7 +57,7 @@ export SPACK_DISABLE_LOCAL_CONFIG="${SPACK_DISABLE_LOCAL_CONFIG:-1}"
 export SPACK_USER_CONFIG_PATH="${SPACK_USER_CONFIG_PATH:-$ROOT/.spack-user-empty}"
 mkdir -p "$SPACK_USER_CONFIG_PATH"
 
-# Ensure git submodules exist
+# Bundled source trees are tracked directly
 #if [[ -d "${ROOT}/.git" ]]; then
 #  msg "Updating submodules..."
 #  git -C "${ROOT}" submodule update --init --recursive
@@ -65,12 +65,12 @@ mkdir -p "$SPACK_USER_CONFIG_PATH"
 [[ -f "${ROOT}/ICESEE/pyproject.toml" ]] || die "Vendored ICESEE not found at ${ROOT}/ICESEE"
 [[ -f "${ROOT}/spack/share/spack/setup-env.sh" ]] || die "Vendored Spack not found at ${ROOT}/spack"
 
-# Choose Spack: system first, else pinned submodule
+# Choose Spack: system first, else bundled subtree
 if have_cmd spack; then
   msg "Using system Spack: $(command -v spack)"
   SPACK_BIN="spack"
 else
-  [[ -f "${ROOT}/spack/share/spack/setup-env.sh" ]] || die "No system spack and no ./spack submodule"
+  [[ -f "${ROOT}/spack/share/spack/setup-env.sh" ]] || die "No system spack and no ./spack subtree"
   msg "Using pinned Spack subtree: ${ROOT}/spack"
   # shellcheck disable=SC1091
   source "${ROOT}/spack/share/spack/setup-env.sh"
@@ -198,9 +198,9 @@ unset PETSC_ARCH || true
 msg "Using Spack OpenMPI: ${OPENMPI_PREFIX}"
 msg "Using Spack PETSc: ${PETSC_DIR}"
 
-# Develop ICESEE from pinned submodule (so spack uses your source), if present
+# Develop ICESEE from tracked subtree (so spack uses your source), if present
 if [[ -f "${ICESEE_SUBMODULE}/pyproject.toml" ]]; then
-  msg "Registering ICESEE submodule for develop install..."
+  msg "Registering ICESEE subtree for develop install..."
   $SPACK_CMD -e "${ENV_DIR}" develop --path "${ICESEE_SUBMODULE}" py-icesee@main || true
 
   msg "Reinstalling py-icesee from local source..."
