@@ -1,2 +1,17 @@
 opt/
 build/
+# Local installed environments and repair/runtime state
+/.spack-env/
+/.icesee-spack/
+/.pace-runtime/
+/.pace-investigation-*/
+/venv-firedrake/
+/ICESEE/.pace-investigation-*/
+# Bundled Spack build/cache state (source remains tracked)
+/spack/opt/
+/spack/var/spack/stage/
+/spack/.cache/
+
+# Python bytecode
+__pycache__/
+*.py[cod]

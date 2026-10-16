@@ -4,9 +4,11 @@ Spack-based installer and environment manager for **ICESEE** and its
 scientific dependencies (MPI, PETSc, HDF5, Python, etc.), designed for
 HPC clusters.
 
-This repository provides: - A reproducible Spack environment with petsc, openmpi and hdf5 - Optional ISSM,
-Firedrake, and Icepack integration - Clean separation between
-Spack-managed and pip-only Python dependencies
+This repository provides:
+
+- A reproducible Spack environment with PETSc, OpenMPI and HDF5.
+- Optional ISSM, Firedrake and Icepack integration.
+- Separate Spack-managed and pip-only Python dependencies.
 
 ---
 # Choosing a Version
@@ -148,3 +150,17 @@ For issues or contributions, contact me via: briankyanjo@u.boisestate.edu
 
 `ICESEE/` and `spack/` are tracked source trees, not submodules.
 See [the subtree maintenance guide](docs/subtrees.md) for updates and exports.
+
+## Documentation and community
+
+| Topic | Guide |
+| --- | --- |
+| Subtree concepts and examples | [Wiki](https://github.com/ICESEE-project/ICESEE-Spack/wiki) · [Versioned sources](docs/wiki/Home.md) |
+| Fetching, pulling and updating ICESEE | [Update guide](docs/wiki/Updating-ICESEE.md) |
+| Exporting ICESEE contributions | [Split and export guide](docs/wiki/Exporting-ICESEE-changes.md) |
+| Spack and other dependencies | [Subtree dependency updates](docs/wiki/Updating-Spack-and-other-subtrees.md) |
+| Conflicts and recovery | [Troubleshooting](docs/wiki/Troubleshooting-and-recovery.md) |
+| Contributing | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Security and conduct | [Security](SECURITY.md) · [Code of Conduct](CODE_OF_CONDUCT.md) |
+
+A parent pull updates the bundled source recorded by ICESEE-Spack. Fetching ICESEE upstream alone does not change `ICESEE/`, and updating source does not automatically rebuild an installed environment.
