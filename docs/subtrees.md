@@ -74,3 +74,35 @@ Job 14053366 completed the simulation path but failed during MPI/PyOP2
 communicator teardown with exit 134. Native Mode-3 ensemble flowline output
 still needs implementation/validation. Both issues remain under investigation;
 the update must not be described as a verified production runtime fix.
+
+
+## Runtime follow-up pending multi-node validation
+
+The follow-up adds native Mode-3 per-member flowline files, root-only HDF5
+writes after collective bounded point sampling, restart-preserved columns,
+explicit written_steps/profile_times metadata, and NaN for unsaved columns.
+Truth/wrong-reference diagnostic saves now use completed steps (k+1), including
+the final step. The model trajectory and forcing are unchanged. The notebook
+uses ICESEE_DATA_PATH when set and retains the extensionless-file fallback.
+
+A lifecycle correction releases the cached group context and the owned MPI
+splits after the final report, before PyOP2 interpreter teardown. The observed
+production failure was MPI_ERR_COMM in PyOP2's communicator delete callback;
+single-process mesh and checkpoint roundtrips exited successfully both with
+and without explicit release, so the production failure has not yet been
+reproduced or proven fixed. No external dependency was patched.
+
+The prepared ICESEE/.../pace/runtime_check.sbatch requests two nodes, four
+ranks total, 32 GiB per node, and a 20-minute walltime limit. It runs two
+members with two spatial ranks each, dt=0.05 for one model year, then resumes
+the completed checkpoint. Diagnostic-only save times are overridden for this
+test to 0.05, 0.1, and 1.0 years; production params.yaml remains unchanged.
+It checks fresh-run exit, truth/member files, finite saved profiles, exact
+written step indices, resume exit, and unchanged profile files after resume.
+Submission requires authorization. It is not an equivalence or scaling study.
+
+```bash
+export ICESEE_SPACK_ROOT="$HOME/r-arobel3-0/ICESEE-Spack"
+export ICESEE_SOURCE_ROOT="/path/to/repaired/ICESEE-Spack/ICESEE"
+sbatch "$ICESEE_SOURCE_ROOT/applications/icepack_model/examples/idealized_pig/pace/runtime_check.sbatch"
+```
