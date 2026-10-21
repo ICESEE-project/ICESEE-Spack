@@ -13,7 +13,17 @@ ENV_DIR="${ROOT}/.spack-env/icesee"
 
 ICESEE_EXTERNALS_ROOT="${ICESEE_EXTERNALS_ROOT:-$ROOT/.icesee-spack/externals}"
 
-ISSM_DIR_DEFAULT="${ISSM_DIR:-$ICESEE_EXTERNALS_ROOT/ISSM}"
+# ISSM: explicit ISSM_DIR, else a build in the pre-submodule externals
+# location (or the pre-2026-02 $HOME default), else the externals/ISSM submodule
+if [[ -n "${ISSM_DIR:-}" ]]; then
+  ISSM_DIR_DEFAULT="${ISSM_DIR}"
+elif [[ -d "${ICESEE_EXTERNALS_ROOT}/ISSM" ]]; then
+  ISSM_DIR_DEFAULT="${ICESEE_EXTERNALS_ROOT}/ISSM"
+elif [[ -x "${HOME}/.icesee-spack/externals/ISSM/bin/issm.exe" ]]; then
+  ISSM_DIR_DEFAULT="${HOME}/.icesee-spack/externals/ISSM"
+else
+  ISSM_DIR_DEFAULT="${ROOT}/externals/ISSM"
+fi
 MODULE_MATLAB="${MODULE_MATLAB:-matlab}"
 
 info "Activating environment..."

@@ -1,3 +1,0 @@
-repos:
-  builtin:
-    destination: ./spack-packages

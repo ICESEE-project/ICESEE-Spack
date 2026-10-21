@@ -14,7 +14,7 @@ ICESEE-Spack currently supports two Icepack/Firedrake installation tracks.
 ## Stable Legacy Version — Recommended
 Use this version for current ICESEE Icepack examples, especially codes that still use `icepack.interpolate(...)`.
 ```bash
-git clone https://github.com/ICESEE-project/ICESEE-Spack.git
+git clone --recurse-submodules https://github.com/ICESEE-project/ICESEE-Spack.git
 cd ICESEE-Spack
 git checkout v0.1.0-icepack-legacy
 ./scripts/install.sh --with-issm --with-icepack
@@ -31,7 +31,7 @@ Modern Version — Experimental
 Use this version only if you want the newer Firedrake/Icepack stack and are prepared to update interpolation calls.
 
 ```bash
-git clone https://github.com/ICESEE-project/ICESEE-Spack.git
+git clone --recurse-submodules https://github.com/ICESEE-project/ICESEE-Spack.git
 cd ICESEE-Spack
 git checkout v0.2.0-icepack-modern
 ./scripts/install.sh --with-issm --with-icepack
@@ -46,7 +46,7 @@ The modern stack may require replacing direct icepack.interpolate(...) calls wit
 
 # Quick Start (Recommended)
 ```bash
-git clone https://github.com/ICESEE-project/ICESEE-Spack.git
+git clone --recurse-submodules https://github.com/ICESEE-project/ICESEE-Spack.git
 cd ICESEE-Spack
 git checkout v0.1.0-icepack-legacy
 ./scripts/install.sh --with-issm --with-icepack
@@ -63,7 +63,7 @@ source scripts/activate.sh
 
 ## Default Install
 
-Installs: - ICESEE (from the tracked `ICESEE/` subtree) - Python (via Spack) - PETSc
+Installs: - ICESEE (from the pinned `ICESEE/` submodule) - Python (via Spack) - PETSc
 (Spack-managed) - MPI-enabled HDF5 + h5py - OpenMPI (auto-built) - pip-only Python dependencies from ICESEE/pyproject.toml
 
 ``` bash
@@ -144,7 +144,10 @@ If ISSM is installed:
 
 For issues or contributions, contact me via: briankyanjo@u.boisestate.edu
 
-## Updating bundled source
+## Pinned dependencies
 
-`ICESEE/` and `spack/` are tracked source trees, not submodules.
-See [the subtree maintenance guide](docs/subtrees.md) for updates and exports.
+`ICESEE/`, `spack/`, `icepack/` and `externals/ISSM` are git submodules pinned
+to reviewed commits; `scripts/install.sh` populates the ones it needs.
+See [the submodule guide](docs/submodules.md) for cloning, updating pins and
+existing installations, and [PACE integration](docs/pace-integration.md) for
+the 2026-10-16 validation notes.

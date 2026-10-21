@@ -57,21 +57,24 @@ export SPACK_DISABLE_LOCAL_CONFIG="${SPACK_DISABLE_LOCAL_CONFIG:-1}"
 export SPACK_USER_CONFIG_PATH="${SPACK_USER_CONFIG_PATH:-$ROOT/.spack-user-empty}"
 mkdir -p "$SPACK_USER_CONFIG_PATH"
 
-# Bundled source trees are tracked directly
-#if [[ -d "${ROOT}/.git" ]]; then
-#  msg "Updating submodules..."
-#  git -C "${ROOT}" submodule update --init --recursive
-#fi
-[[ -f "${ROOT}/ICESEE/pyproject.toml" ]] || die "Vendored ICESEE not found at ${ROOT}/ICESEE"
-[[ -f "${ROOT}/spack/share/spack/setup-env.sh" ]] || die "Vendored Spack not found at ${ROOT}/spack"
+# Populate the pinned submodules (ICESEE, spack, and icepack / externals/ISSM
+# when requested). Existing builds are reused; see scripts/submodules.sh.
+if [[ -e "${ROOT}/.git" ]]; then
+  SUBMODULE_FLAGS=()
+  [[ "${WITH_ICEPACK}" -eq 1 ]] && SUBMODULE_FLAGS+=(--with-icepack)
+  [[ "${WITH_ISSM}" -eq 1 ]] && SUBMODULE_FLAGS+=(--with-issm)
+  bash "${ROOT}/scripts/submodules.sh" ${SUBMODULE_FLAGS[@]+"${SUBMODULE_FLAGS[@]}"}
+fi
+[[ -f "${ROOT}/ICESEE/pyproject.toml" ]] || die "ICESEE submodule not populated at ${ROOT}/ICESEE (run: git submodule update --init ICESEE)"
+[[ -f "${ROOT}/spack/share/spack/setup-env.sh" ]] || die "Spack submodule not populated at ${ROOT}/spack (run: git submodule update --init spack)"
 
-# Choose Spack: system first, else bundled subtree
+# Choose Spack: system first, else the pinned submodule
 if have_cmd spack; then
   msg "Using system Spack: $(command -v spack)"
   SPACK_BIN="spack"
 else
-  [[ -f "${ROOT}/spack/share/spack/setup-env.sh" ]] || die "No system spack and no ./spack subtree"
-  msg "Using pinned Spack subtree: ${ROOT}/spack"
+  [[ -f "${ROOT}/spack/share/spack/setup-env.sh" ]] || die "No system spack and no ./spack submodule"
+  msg "Using pinned Spack submodule: ${ROOT}/spack"
   # shellcheck disable=SC1091
   source "${ROOT}/spack/share/spack/setup-env.sh"
   SPACK_BIN="spack"
@@ -198,9 +201,9 @@ unset PETSC_ARCH || true
 msg "Using Spack OpenMPI: ${OPENMPI_PREFIX}"
 msg "Using Spack PETSc: ${PETSC_DIR}"
 
-# Develop ICESEE from tracked subtree (so spack uses your source), if present
+# Develop ICESEE from the pinned submodule (so spack uses your source), if present
 if [[ -f "${ICESEE_SUBMODULE}/pyproject.toml" ]]; then
-  msg "Registering ICESEE subtree for develop install..."
+  msg "Registering ICESEE submodule for develop install..."
   $SPACK_CMD -e "${ENV_DIR}" develop --path "${ICESEE_SUBMODULE}" py-icesee@main || true
 
   msg "Reinstalling py-icesee from local source..."
@@ -257,11 +260,21 @@ fi
 if [[ "${WITH_ISSM}" -eq 1 ]]; then
   msg "Installing ISSM (--with-issm enabled)..."
   export ICESEE_EXTERNALS_ROOT="${ICESEE_EXTERNALS_ROOT:-$ROOT/.icesee-spack/externals}"
-  export ISSM_PREFIX="${ISSM_PREFIX:-$ICESEE_EXTERNALS_ROOT/ISSM}"
+  # explicit ISSM_PREFIX/ISSM_DIR, else an existing build in the pre-submodule
+  # location (reused, no rebuild), else the externals/ISSM submodule
+  if [[ -z "${ISSM_PREFIX:-}" ]]; then
+    if [[ -n "${ISSM_DIR:-}" ]]; then
+      ISSM_PREFIX="${ISSM_DIR}"
+    elif [[ -d "${ICESEE_EXTERNALS_ROOT}/ISSM/.git" ]]; then
+      ISSM_PREFIX="${ICESEE_EXTERNALS_ROOT}/ISSM"
+    else
+      ISSM_PREFIX="${ROOT}/externals/ISSM"
+    fi
+  fi
+  export ISSM_PREFIX
   export MODULE_GCC="${MODULE_GCC:-gcc/${WANT_GCC:-13}}"
   export MODULE_MATLAB="${MODULE_MATLAB:-matlab}"
-  ISSM_DIR="${ISSM_DIR:-$ICESEE_EXTERNALS_ROOT/ISSM}"
-  export ISSM_DIR
+  export ISSM_DIR="${ISSM_PREFIX}"
   export OPENMPI_PREFIX
   bash "${ROOT}/scripts/build_issm.sh"
 else
@@ -301,7 +314,7 @@ if [[ -f "${ROOT}/scripts/test.sh" ]]; then
   bash "${ROOT}/scripts/test.sh"
   if [[ "${WITH_ISSM}" -eq 1 && -f "${ROOT}/scripts/test_issm.sh" ]]; then
     msg "Running ${ROOT}/scripts/test_issm.sh... to test ISSM installation"
-    export ISSM_DIR="${ISSM_DIR:-$ICESEE_EXTERNALS_ROOT/ISSM}"
+    export ISSM_DIR="${ISSM_DIR:-${ISSM_PREFIX:-$ROOT/externals/ISSM}}"
     bash "${ROOT}/scripts/test_issm.sh"
   fi
 else
