@@ -1,4 +1,0 @@
-include:
-  - path: "${platform}"
-    optional: true
-  - path: base

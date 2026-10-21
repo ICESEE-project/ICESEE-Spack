@@ -12,11 +12,14 @@
 # Env vars (optional):
 #   OPENMPI_PREFIX      REQUIRED. Prefix to OpenMPI (passed from install.sh)
 #
-#   ISSM_PREFIX         Where to install ISSM (default: $ICESEE_EXTERNALS_ROOT/ISSM)
-#   ICESEE_EXTERNALS_ROOT Root for externals (default: $HOME/.icesee-spack/externals)
-#   ISSM_BRANCH         Git branch/tag (default: main)
-#   ISSM_REPO           Git repo URL (default: https://github.com/ISSMteam/ISSM.git)
+#   ISSM_PREFIX         Where ISSM is built (default: the externals/ISSM submodule,
+#                       or an existing build at $ICESEE_EXTERNALS_ROOT/ISSM)
+#   ICESEE_EXTERNALS_ROOT Root of the pre-submodule externals layout
+#                       (default: $ROOT/.icesee-spack/externals)
+#   ISSM_REPO           Git repo URL for a non-submodule ISSM_PREFIX
+#                       (default: https://github.com/ISSMteam/ISSM.git)
 #   ISSM_CLEAN          If "1", delete existing ISSM_PREFIX before install (default: 0)
+#   ISSM_REBUILD        If "1", rebuild even when ISSM is already built (default: 0)
 #
 #   MODULE_GCC          Module name for GCC (default: gcc/13)
 #   MODULE_MATLAB       Module name for MATLAB (default: matlab)
@@ -56,12 +59,19 @@ export LD_LIBRARY_PATH="${OPENMPI_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
 # Defaults
 # ------------------------
 ISSM_REPO="${ISSM_REPO:-https://github.com/ISSMteam/ISSM.git}"
-ISSM_BRANCH="${ISSM_BRANCH:-main}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ICESEE_EXTERNALS_ROOT="${ICESEE_EXTERNALS_ROOT:-$ROOT/.icesee-spack/externals}"
-ISSM_PREFIX="${ISSM_PREFIX:-$ICESEE_EXTERNALS_ROOT/ISSM}"
+ISSM_SUBMODULE="${ROOT}/externals/ISSM"
+# An ISSM already built in the pre-submodule location stays in use (no rebuild).
+if [[ -z "${ISSM_PREFIX:-}" && -d "${ICESEE_EXTERNALS_ROOT}/ISSM/.git" ]]; then
+  ISSM_PREFIX="${ICESEE_EXTERNALS_ROOT}/ISSM"
+fi
+ISSM_PREFIX="${ISSM_PREFIX:-$ISSM_SUBMODULE}"
 ISSM_CLEAN="${ISSM_CLEAN:-0}"
+ISSM_REBUILD="${ISSM_REBUILD:-0}"
+# the commit ICESEE-Spack pins for ISSM (its externals/ISSM gitlink)
+ISSM_PIN="$(git -C "${ROOT}" ls-tree HEAD externals/ISSM 2>/dev/null | awk '$2 == "commit" {print $3}')"
 
 # Ensure ISSM_DIR is set for ISSM internal scripts
 export ISSM_DIR="${ISSM_PREFIX}"
@@ -199,17 +209,28 @@ if [[ -d "${ISSM_PREFIX}" && "${ISSM_CLEAN}" == "1" ]]; then
   rm -rf "${ISSM_PREFIX}"
 fi
 
-mkdir -p "${ISSM_PREFIX}"
+if [[ -x "${ISSM_PREFIX}/bin/issm.exe" && "${ISSM_REBUILD}" != "1" && "${ISSM_CLEAN}" != "1" ]]; then
+  log "ISSM already built at ${ISSM_PREFIX} (skipping; set ISSM_REBUILD=1 to rebuild)"
+  exit 0
+fi
 
-# Clone into prefix (or reuse existing clone)
-if [[ ! -d "${ISSM_PREFIX}/.git" ]]; then
-  log "Cloning ISSM into ${ISSM_PREFIX}"
-  git clone --branch "${ISSM_BRANCH}" --depth 1 "${ISSM_REPO}" "${ISSM_PREFIX}"
+# Source: the pinned submodule, or a clone of the same pinned commit elsewhere.
+# An existing checkout is never moved, so a partial build resumes on its sources.
+if [[ "${ISSM_PREFIX}" == "${ISSM_SUBMODULE}" ]]; then
+  if [[ ! -e "${ISSM_PREFIX}/.git" ]]; then
+    log "Checking out the externals/ISSM submodule"
+    git -C "${ROOT}" submodule update --init --checkout -- externals/ISSM
+  fi
+elif [[ ! -d "${ISSM_PREFIX}/.git" ]]; then
+  [[ -n "${ISSM_PIN}" ]] || die "No pinned ISSM commit (externals/ISSM gitlink) to clone into ${ISSM_PREFIX}"
+  log "Cloning ISSM ${ISSM_PIN:0:12} into ${ISSM_PREFIX}"
+  mkdir -p "${ISSM_PREFIX}"
+  git -C "${ISSM_PREFIX}" init -q
+  git -C "${ISSM_PREFIX}" remote add origin "${ISSM_REPO}"
+  git -C "${ISSM_PREFIX}" fetch --depth 1 origin "${ISSM_PIN}"
+  git -C "${ISSM_PREFIX}" checkout -q --detach FETCH_HEAD
 else
-  log "ISSM repo already present at ${ISSM_PREFIX}; updating"
-  git -C "${ISSM_PREFIX}" fetch --all --tags || true
-  git -C "${ISSM_PREFIX}" checkout "${ISSM_BRANCH}" || true
-  git -C "${ISSM_PREFIX}" pull || true
+  log "Using the existing ISSM checkout at ${ISSM_PREFIX} ($(git -C "${ISSM_PREFIX}" rev-parse --short HEAD 2>/dev/null || echo unknown))"
 fi
 
 cd "${ISSM_PREFIX}"
